@@ -87,11 +87,12 @@ volt/
 ```
 Flutter folders use underscores because Dart package names cannot contain hyphens.
 
+
 ## Current state — keep this updated
-Phase 1, customer app. Nothing built yet. No backend running, no database.
-Flutter target: physical Android phone over USB (no emulator).
-Environment: Windows, Flutter SDK at C:\dev\flutter.
-Fare model agreed for prototype (client-side placeholder only, moves to backend later):
-- Bike: ₹30 base incl. 2 km, ₹8/km after, min ₹40
-- 3-wheeler: ₹60 base incl. 3 km, ₹13/km after, min ₹80
-- Mini-truck: ₹120 base incl. 3 km, ₹20/km after, min ₹150
+Phase 1, customer app. Working on device (RMX3371, Android 14).
+Built: phone entry → OTP → booking home → vehicle select → simulated status.
+All client-side. No backend, no database, nothing persists across app restart.
+Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
+Fakes in place behind interfaces: FakeAuthRepository, FareEstimator,
+BookingStatusNotifier's scripted timer.
+Package id: still com.example.customer_app — RENAME BEFORE FIREBASE.
