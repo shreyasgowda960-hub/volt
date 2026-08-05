@@ -91,8 +91,14 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 ## Current state — keep this updated
 Phase 1, customer app. Working on device (RMX3371, Android 14).
 Built: phone entry → OTP → booking home → vehicle select → simulated status.
-All client-side. No backend, no database, nothing persists across app restart.
+All client-side. No database, nothing persists across app restart.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Fakes in place behind interfaces: FakeAuthRepository, FareEstimator,
 BookingStatusNotifier's scripted timer.
 Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
+
+Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
+Health endpoint at /api/v1/health confirms DB connectivity. No models, no
+migrations, no real endpoints yet — bookings schema being designed by hand.
+Postgres: local install (v18), database volt_dev.
+Money convention: integer paise, columns suffixed _paise.
