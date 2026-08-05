@@ -1,0 +1,29 @@
+﻿# secrets — never commit
+.env
+*.env
+!.env.example
+
+# Flutter / Dart
+**/.dart_tool/
+**/build/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/*.iml
+
+# Firebase config
+**/google-services.json
+**/GoogleService-Info.plist
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Node / React
+node_modules/
+
+# Editors / OS
+.idea/
+.DS_Store
+Thumbs.db
