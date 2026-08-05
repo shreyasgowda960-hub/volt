@@ -95,4 +95,4 @@ All client-side. No backend, no database, nothing persists across app restart.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Fakes in place behind interfaces: FakeAuthRepository, FareEstimator,
 BookingStatusNotifier's scripted timer.
-Package id: still com.example.customer_app — RENAME BEFORE FIREBASE.
+Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
