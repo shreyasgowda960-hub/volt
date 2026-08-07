@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Numeric, String
+from sqlalchemy import false, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,8 +23,12 @@ class Driver(Base, TimestampMixin):
         ForeignKey("vehicle_types.code"), nullable=False, index=True
     )
 
-    is_online: Mapped[bool] = mapped_column(default=False, nullable=False)
-    is_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
+    is_online: Mapped[bool] = mapped_column(
+        default=False, server_default=false(), nullable=False
+    )
+    is_verified: Mapped[bool] = mapped_column(
+        default=False, server_default=false(), nullable=False
+    )
 
     rating: Mapped[float | None] = mapped_column(
         Numeric(2, 1, asdecimal=False), nullable=True

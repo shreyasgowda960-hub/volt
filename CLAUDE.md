@@ -98,7 +98,12 @@ BookingStatusNotifier's scripted timer.
 Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
 
 Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
-Health endpoint at /api/v1/health confirms DB connectivity. No models, no
-migrations, no real endpoints yet — bookings schema being designed by hand.
+Health endpoint at /api/v1/health confirms DB connectivity. No real endpoints
+yet — routers/services are spec 004.
 Postgres: local install (v18), database volt_dev.
 Money convention: integer paise, columns suffixed _paise.
+
+Schema: users, drivers, vehicle_types, bookings. Alembic configured (async
+template), 2 migrations applied. Money is integer paise everywhere. Bookings
+snapshot their quoted rates so pricing changes never rewrite past bookings.
+Status derived from per-transition timestamps; cancelled and expired distinct.

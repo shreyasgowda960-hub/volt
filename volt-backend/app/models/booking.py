@@ -60,6 +60,7 @@ class Booking(Base, TimestampMixin):
     status: Mapped[BookingStatus] = mapped_column(
         Enum(BookingStatus, name="booking_status"),
         default=BookingStatus.pending,
+        server_default=BookingStatus.pending.value,
         nullable=False,
         index=True,
     )
@@ -107,6 +108,7 @@ class Booking(Base, TimestampMixin):
     payment_method: Mapped[PaymentMethod] = mapped_column(
         Enum(PaymentMethod, name="payment_method"),
         default=PaymentMethod.cash,
+        server_default=PaymentMethod.cash.value,
         nullable=False,
     )
 

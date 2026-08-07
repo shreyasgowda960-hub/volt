@@ -1,4 +1,4 @@
-from sqlalchemy import Numeric, String
+from sqlalchemy import Numeric, String, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -32,5 +32,7 @@ class VehicleType(Base, TimestampMixin):
 
     # Retire a category by flipping this, never by deleting the row —
     # bookings reference the code.
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        default=True, server_default=true(), nullable=False
+    )
     sort_order: Mapped[int] = mapped_column(default=0, nullable=False)

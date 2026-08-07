@@ -1,4 +1,4 @@
-from sqlalchemy import String
+from sqlalchemy import String, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -23,4 +23,6 @@ class User(Base, TimestampMixin):
     )
 
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        default=True, server_default=true(), nullable=False
+    )
