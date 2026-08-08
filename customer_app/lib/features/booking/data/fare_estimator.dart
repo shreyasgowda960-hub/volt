@@ -34,11 +34,17 @@ class LocalFareEstimator implements FareEstimator {
   double _deg2rad(double deg) => deg * (pi / 180);
 
   @override
-  Future<List<FareEstimate>> estimateAll(Location pickup, Location drop) async {
+  Future<List<FareEstimate>> estimateAll(
+    Location pickup,
+    Location drop, {
+    required double approxWeightKg,
+  }) async {
     final distanceKm = _haversineKm(pickup, drop) * _roadFactor;
     final etaMinutes = ((distanceKm / _avgSpeedKmh) * 60).round();
 
-    return VehicleType.values.map((vehicle) {
+    return VehicleType.values
+        .where((vehicle) => vehicle.capacityKg >= approxWeightKg)
+        .map((vehicle) {
       final billableKm = max(0.0, distanceKm - vehicle.includedKm);
       final rawFare = vehicle.baseFare + billableKm * vehicle.perKmRate;
       return FareEstimate(

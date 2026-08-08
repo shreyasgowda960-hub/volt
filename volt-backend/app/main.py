@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,11 +10,20 @@ from app.database import engine
 from app.routers import bookings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_firebase()
+    try:
+        init_firebase()
+    except Exception:
+        logger.error(
+            "Firebase initialization failed. Check that FIREBASE_CREDENTIALS_JSON "
+            "(deployed) or FIREBASE_CREDENTIALS_PATH (local) points to valid "
+            "service account credentials."
+        )
+        raise
     yield
 
 

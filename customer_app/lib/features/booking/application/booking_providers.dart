@@ -57,11 +57,16 @@ final bookingRepositoryProvider = Provider<BookingRepository>((ref) {
   return RemoteBookingRepository(ref.watch(apiClientProvider));
 });
 
-final fareEstimatesProvider = FutureProvider<List<FareEstimate>>((ref) async {
+final fareEstimatesProvider =
+    FutureProvider.family<List<FareEstimate>, double>((ref, approxWeightKg) async {
   final pickup = ref.watch(pickupLocationProvider);
   final drop = ref.watch(dropLocationProvider);
   if (pickup == null || drop == null) return const [];
-  return ref.watch(fareEstimatorProvider).estimateAll(pickup, drop);
+  return ref.watch(fareEstimatorProvider).estimateAll(
+        pickup,
+        drop,
+        approxWeightKg: approxWeightKg,
+      );
 });
 
 final bookingByCodeProvider =

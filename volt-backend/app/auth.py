@@ -1,3 +1,5 @@
+import json
+
 import firebase_admin
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -16,9 +18,16 @@ _bearer = HTTPBearer(auto_error=True)
 
 def init_firebase() -> None:
     """Idempotent. Called once at app startup."""
-    if not firebase_admin._apps:
-        cred = credentials.Certificate(get_settings().firebase_credentials_path)
-        firebase_admin.initialize_app(cred)
+    if firebase_admin._apps:
+        return
+
+    settings = get_settings()
+    if settings.firebase_credentials_json:
+        cred = credentials.Certificate(json.loads(settings.firebase_credentials_json))
+    else:
+        cred = credentials.Certificate(settings.firebase_credentials_path)
+
+    firebase_admin.initialize_app(cred)
 
 
 async def get_current_user(

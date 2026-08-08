@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: volt-api
+    runtime: python
+    rootDir: volt-backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: alembic upgrade head
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: volt-db
+          property: connectionString
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+
+databases:
+  - name: volt-db
+    plan: free

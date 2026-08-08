@@ -61,7 +61,7 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
   Widget build(BuildContext context) {
     final pickup = ref.watch(pickupLocationProvider);
     final drop = ref.watch(dropLocationProvider);
-    final estimates = ref.watch(fareEstimatesProvider);
+    final estimates = ref.watch(fareEstimatesProvider(widget.approxWeightKg));
     final selected = ref.watch(selectedVehicleProvider);
 
     return Scaffold(
@@ -87,7 +87,8 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
                         ),
                         const SizedBox(height: 16),
                         FilledButton(
-                          onPressed: () => ref.invalidate(fareEstimatesProvider),
+                          onPressed: () => ref.invalidate(
+                              fareEstimatesProvider(widget.approxWeightKg)),
                           child: const Text('Retry'),
                         ),
                       ],
@@ -95,10 +96,17 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
                   ),
                 ),
                 data: (data) => data.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'Select a pickup and drop first',
-                          style: TextStyle(color: AppColors.textSecondary),
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Text(
+                            pickup == null || drop == null
+                                ? 'Select a pickup and drop first'
+                                : 'No vehicle can carry ${widget.approxWeightKg.toStringAsFixed(1)} kg on this route. '
+                                    'Try splitting the shipment into a lighter load.',
+                            style: const TextStyle(color: AppColors.textSecondary),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
                       )
                     : ListView.separated(

@@ -10,7 +10,11 @@ class RemoteFareEstimator implements FareEstimator {
   final ApiClient _api;
 
   @override
-  Future<List<FareEstimate>> estimateAll(Location pickup, Location drop) async {
+  Future<List<FareEstimate>> estimateAll(
+    Location pickup,
+    Location drop, {
+    required double approxWeightKg,
+  }) async {
     final json = await _api.post('/api/v1/bookings/estimate', {
       'pickup': {
         'address': pickup.name,
@@ -22,6 +26,7 @@ class RemoteFareEstimator implements FareEstimator {
         'lat': drop.lat,
         'lng': drop.lng,
       },
+      'approx_weight_kg': approxWeightKg,
     });
 
     final options = (json['options'] as List<dynamic>? ?? <dynamic>[]);
