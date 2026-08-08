@@ -1,17 +1,66 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
+import '../../auth/application/auth_providers.dart';
 import '../application/booking_providers.dart';
 import '../domain/fare_estimate.dart';
+import '../domain/location.dart';
 import '../domain/vehicle_type.dart';
 import 'booking_status_screen.dart';
 
-class VehicleSelectScreen extends ConsumerWidget {
-  const VehicleSelectScreen({super.key});
+class VehicleSelectScreen extends ConsumerStatefulWidget {
+  const VehicleSelectScreen({
+    required this.goodsDescription,
+    required this.approxWeightKg,
+    super.key,
+  });
+
+  final String goodsDescription;
+  final double approxWeightKg;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<VehicleSelectScreen> createState() =>
+      _VehicleSelectScreenState();
+}
+
+class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
+  bool _booking = false;
+
+  Future<void> _confirm(Location pickup, Location drop, VehicleType vehicleType) async {
+    if (_booking) return;
+    setState(() => _booking = true);
+    try {
+      final booking = await ref.read(bookingRepositoryProvider).create(
+            pickup: pickup,
+            drop: drop,
+            vehicleType: vehicleType,
+            goodsDescription: widget.goodsDescription,
+            approxWeightKg: widget.approxWeightKg,
+          );
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => BookingStatusScreen(publicCode: booking.publicCode),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      if (e.isUnauthorized) {
+        await ref.read(sessionProvider.notifier).signOut();
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _booking = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pickup = ref.watch(pickupLocationProvider);
+    final drop = ref.watch(dropLocationProvider);
     final estimates = ref.watch(fareEstimatesProvider);
     final selected = ref.watch(selectedVehicleProvider);
 
@@ -21,45 +70,70 @@ class VehicleSelectScreen extends ConsumerWidget {
         child: Column(
           children: [
             Expanded(
-              child: estimates.isEmpty
-                  ? const Center(
-                      child: Text(
-                        'Select a pickup and drop first',
-                        style: TextStyle(color: AppColors.textSecondary),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(24),
-                      itemCount: estimates.length,
-                      separatorBuilder: (_, _) => const SizedBox(height: 12),
-                      itemBuilder: (context, i) {
-                        final estimate = estimates[i];
-                        return _VehicleCard(
-                          estimate: estimate,
-                          selected: selected == estimate.vehicleType,
-                          onTap: () => ref
-                              .read(selectedVehicleProvider.notifier)
-                              .select(estimate.vehicleType),
-                        );
-                      },
+              child: estimates.when(
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, _) => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          error is ApiException
+                              ? error.message
+                              : 'Something went wrong.',
+                          style: const TextStyle(color: AppColors.textSecondary),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () => ref.invalidate(fareEstimatesProvider),
+                          child: const Text('Retry'),
+                        ),
+                      ],
                     ),
+                  ),
+                ),
+                data: (data) => data.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Select a pickup and drop first',
+                          style: TextStyle(color: AppColors.textSecondary),
+                        ),
+                      )
+                    : ListView.separated(
+                        padding: const EdgeInsets.all(24),
+                        itemCount: data.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 12),
+                        itemBuilder: (context, i) {
+                          final estimate = data[i];
+                          return _VehicleCard(
+                            estimate: estimate,
+                            selected: selected == estimate.vehicleType,
+                            onTap: () => ref
+                                .read(selectedVehicleProvider.notifier)
+                                .select(estimate.vehicleType),
+                          );
+                        },
+                      ),
+              ),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
               child: FilledButton(
-                onPressed: selected == null
+                onPressed: selected == null || pickup == null || drop == null || _booking
                     ? null
-                    : () {
-                        // Fire-and-forget: the ~11s lifecycle plays out on
-                        // BookingStatusScreen, which watches the same state.
-                        ref.read(bookingStatusProvider.notifier).start();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const BookingStatusScreen(),
-                          ),
-                        );
-                      },
-                child: const Text('Confirm booking'),
+                    : () => _confirm(pickup, drop, selected),
+                child: _booking
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Confirm booking'),
               ),
             ),
           ],

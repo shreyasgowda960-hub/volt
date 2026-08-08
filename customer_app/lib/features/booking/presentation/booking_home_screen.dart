@@ -8,17 +8,39 @@ import '../data/bengaluru_locations.dart';
 import '../domain/location.dart';
 import 'vehicle_select_screen.dart';
 
-class BookingHomeScreen extends ConsumerWidget {
+class BookingHomeScreen extends ConsumerStatefulWidget {
   const BookingHomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<BookingHomeScreen> createState() => _BookingHomeScreenState();
+}
+
+class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
+  final _goodsController = TextEditingController();
+  final _weightController = TextEditingController();
+
+  @override
+  void dispose() {
+    _goodsController.dispose();
+    _weightController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
     final pickup = ref.watch(pickupLocationProvider);
     final drop = ref.watch(dropLocationProvider);
 
     final sameLocation = pickup != null && drop != null && pickup == drop;
-    final canProceed = pickup != null && drop != null && !sameLocation;
+    final goodsDescription = _goodsController.text.trim();
+    final approxWeightKg = double.tryParse(_weightController.text.trim());
+    final canProceed = pickup != null &&
+        drop != null &&
+        !sameLocation &&
+        goodsDescription.isNotEmpty &&
+        approxWeightKg != null &&
+        approxWeightKg > 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -32,7 +54,7 @@ class BookingHomeScreen extends ConsumerWidget {
         ],
       ),
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -105,12 +127,52 @@ class BookingHomeScreen extends ConsumerWidget {
                   style: TextStyle(color: AppColors.danger, fontSize: 13),
                 ),
               ],
-              const Spacer(),
+              const SizedBox(height: 20),
+              const Text(
+                'What are you sending?',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.navy,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _goodsController,
+                maxLength: 255,
+                decoration: const InputDecoration(
+                  hintText: 'e.g. Two cartons of books',
+                  prefixIcon: Icon(Icons.inventory_2_outlined),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const Text(
+                'Approx. weight (kg)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.navy,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _weightController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  hintText: 'e.g. 12.5',
+                  prefixIcon: Icon(Icons.scale_outlined),
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 24),
               FilledButton(
                 onPressed: canProceed
                     ? () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => const VehicleSelectScreen(),
+                            builder: (_) => VehicleSelectScreen(
+                              goodsDescription: goodsDescription,
+                              approxWeightKg: approxWeightKg,
+                            ),
                           ),
                         )
                     : null,

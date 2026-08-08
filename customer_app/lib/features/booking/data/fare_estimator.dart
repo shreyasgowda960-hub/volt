@@ -4,9 +4,14 @@ import '../domain/fare_estimate.dart';
 import '../domain/location.dart';
 import '../domain/vehicle_type.dart';
 
-/// Client-side placeholder. Straight-line distance x a road-winding factor,
-/// standing in for Google Distance Matrix until phase 3.
-class FareEstimator {
+abstract interface class FareEstimator {
+  Future<List<FareEstimate>> estimateAll(Location pickup, Location drop);
+}
+
+/// DISPLAY ONLY. The server is the authority on price — see
+/// RemoteFareEstimator. This exists as an offline fallback and for tests, and
+/// its output must never be sent to the server or treated as a real quote.
+class LocalFareEstimator implements FareEstimator {
   static const _earthRadiusKm = 6371.0;
   static const _roadFactor = 1.4;
   static const _avgSpeedKmh = 20.0;
@@ -24,7 +29,8 @@ class FareEstimator {
 
   double _deg2rad(double deg) => deg * (pi / 180);
 
-  List<FareEstimate> estimateAll(Location pickup, Location drop) {
+  @override
+  Future<List<FareEstimate>> estimateAll(Location pickup, Location drop) async {
     final distanceKm = _haversineKm(pickup, drop) * _roadFactor;
     final etaMinutes = ((distanceKm / _avgSpeedKmh) * 60).round();
 

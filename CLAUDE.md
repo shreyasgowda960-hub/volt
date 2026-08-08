@@ -90,14 +90,22 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 
 ## Current state — keep this updated
 Phase 1, customer app. Working on device (RMX3371, Android 14).
-Built: phone entry → OTP → booking home → vehicle select → simulated status.
-All client-side. No database, nothing persists across app restart.
+Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
 FakeAuthRepository kept behind the same interface for tests/offline work,
-not wired up by default. FareEstimator and BookingStatusNotifier's scripted
-timer are still client-side fakes.
+not wired up by default.
 Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
+
+App talks to the API (spec 006). Fares come from POST /bookings/estimate,
+bookings from POST /bookings. LocalFareEstimator is display-only fallback;
+the server is authoritative on price. Base URL injected via
+--dart-define=API_BASE_URL. Cleartext HTTP allowed in debug source set only.
+Run on device: flutter run -d RMX3371 --dart-define=API_BASE_URL=http://<lan-ip>:8000
+Server must run with --host 0.0.0.0 for the phone to reach it.
+Booking status screen shows the real, persisted status (currently always
+`pending` — no driver app exists yet) with a manual refresh button. No
+polling — that's spec 007.
 
 Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
 Health endpoint at /api/v1/health confirms DB connectivity.
