@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -72,6 +74,12 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
           children: [
             Expanded(
               child: estimates.when(
+                // Default skipLoadingOnRefresh:true would keep showing the
+                // stale error/Retry button for the whole refetch — including
+                // a 30-60s Render cold start — with zero feedback. Force the
+                // loading branch (and _EstimatesLoadingIndicator's timer) to
+                // actually re-mount on every manual Retry tap.
+                skipLoadingOnRefresh: false,
                 loading: () => const _EstimatesLoadingIndicator(),
                 error: (error, _) => Center(
                   child: Padding(
@@ -162,15 +170,22 @@ class _EstimatesLoadingIndicator extends StatefulWidget {
 
 class _EstimatesLoadingIndicatorState extends State<_EstimatesLoadingIndicator> {
   bool _showWakingMessage = false;
+  Timer? _wakingMessageTimer;
 
   @override
   void initState() {
     super.initState();
     if (AppConfig.isRemote) {
-      Future<void>.delayed(const Duration(seconds: 5), () {
-        if (mounted) setState(() => _showWakingMessage = true);
+      _wakingMessageTimer = Timer(const Duration(seconds: 5), () {
+        setState(() => _showWakingMessage = true);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _wakingMessageTimer?.cancel();
+    super.dispose();
   }
 
   @override
