@@ -4,8 +4,10 @@ services:
     runtime: python
     rootDir: volt-backend
     plan: free
-    buildCommand: pip install -r requirements.txt
-    preDeployCommand: alembic upgrade head
+    # Migrations run in buildCommand because preDeployCommand needs a paid plan.
+    # Downside: this runs on every build, and a failed migration fails the build
+    # rather than being isolated from it. Move to preDeployCommand when paid.
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/v1/health
     envVars:
