@@ -1,5 +1,5 @@
 from app.models.vehicle_type import VehicleType
-from app.services.fare import _fare_paise
+from app.services.fare import _fare_paise, _filter_by_capacity
 
 
 def _make_vehicle(
@@ -8,6 +8,7 @@ def _make_vehicle(
     included_km: float,
     per_km_paise: int,
     min_fare_paise: int,
+    capacity_kg: int = 1,
 ) -> VehicleType:
     return VehicleType(
         code=code,
@@ -16,7 +17,7 @@ def _make_vehicle(
         included_km=included_km,
         per_km_paise=per_km_paise,
         min_fare_paise=min_fare_paise,
-        capacity_kg=1,
+        capacity_kg=capacity_kg,
         sort_order=0,
     )
 
@@ -54,3 +55,31 @@ def test_zero_distance_returns_min_fare_not_zero():
     result = _fare_paise(BIKE, 0)
     assert result == 4000
     assert result != 0
+
+
+_BIKE_20KG = _make_vehicle("bike", 3000, 2.0, 800, 4000, capacity_kg=20)
+_THREE_WHEELER_500KG = _make_vehicle(
+    "three_wheeler", 6000, 3.0, 1300, 8000, capacity_kg=500
+)
+_MINI_TRUCK_1250KG = _make_vehicle(
+    "mini_truck", 12000, 3.0, 2000, 15000, capacity_kg=1250
+)
+_ALL_VEHICLES = [_BIKE_20KG, _THREE_WHEELER_500KG, _MINI_TRUCK_1250KG]
+
+
+def test_filter_by_capacity_none_returns_all_vehicles():
+    assert _filter_by_capacity(_ALL_VEHICLES, None) == _ALL_VEHICLES
+
+
+def test_filter_by_capacity_excludes_vehicles_below_weight():
+    result = _filter_by_capacity(_ALL_VEHICLES, 25)
+    assert result == [_THREE_WHEELER_500KG, _MINI_TRUCK_1250KG]
+
+
+def test_filter_by_capacity_at_exact_boundary_is_included():
+    result = _filter_by_capacity(_ALL_VEHICLES, 20)
+    assert _BIKE_20KG in result
+
+
+def test_filter_by_capacity_above_all_capacities_returns_empty():
+    assert _filter_by_capacity(_ALL_VEHICLES, 5000) == []

@@ -14,6 +14,7 @@ class LocationIn(BaseModel):
 class EstimateRequest(BaseModel):
     pickup: LocationIn
     drop: LocationIn
+    approx_weight_kg: float | None = Field(default=None, gt=0, le=2000)
 
 
 class FareOption(BaseModel):

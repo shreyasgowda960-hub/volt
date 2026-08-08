@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.booking import Booking, BookingStatus
 from app.models.user import User
 from app.schemas.booking import BookingCreate
-from app.services.fare import _fare_paise, load_vehicle_type
+from app.services.fare import VehicleCapacityExceeded, _fare_paise, load_vehicle_type
 from app.utils.codes import generate_public_code
 from app.utils.distance import eta_minutes, road_distance_m
 
@@ -24,6 +24,8 @@ async def create_booking(
     db: AsyncSession, payload: BookingCreate, user: User
 ) -> Booking:
     vehicle = await load_vehicle_type(db, payload.vehicle_type_code)
+    if payload.approx_weight_kg > vehicle.capacity_kg:
+        raise VehicleCapacityExceeded(payload.approx_weight_kg, vehicle)
 
     distance_m = road_distance_m(
         payload.pickup.lat,

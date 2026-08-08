@@ -5,7 +5,11 @@ import '../domain/location.dart';
 import '../domain/vehicle_type.dart';
 
 abstract interface class FareEstimator {
-  Future<List<FareEstimate>> estimateAll(Location pickup, Location drop);
+  Future<List<FareEstimate>> estimateAll(
+    Location pickup,
+    Location drop, {
+    required double approxWeightKg,
+  });
 }
 
 /// DISPLAY ONLY. The server is the authority on price — see

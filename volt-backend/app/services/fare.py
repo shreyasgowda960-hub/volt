@@ -10,6 +10,16 @@ class VehicleTypeNotFound(Exception):
     pass
 
 
+class VehicleCapacityExceeded(Exception):
+    def __init__(self, approx_weight_kg: float, vehicle: VehicleType):
+        self.approx_weight_kg = approx_weight_kg
+        self.vehicle = vehicle
+        super().__init__(
+            f"{approx_weight_kg}kg exceeds {vehicle.label}'s "
+            f"{vehicle.capacity_kg}kg capacity"
+        )
+
+
 def _fare_paise(vehicle: VehicleType, distance_m: int) -> int:
     """base + (billable km x per-km rate), floored at the minimum fare.
 
@@ -40,17 +50,27 @@ async def load_vehicle_type(db: AsyncSession, code: str) -> VehicleType:
     return vehicle
 
 
+def _filter_by_capacity(
+    vehicles: list[VehicleType], approx_weight_kg: float | None
+) -> list[VehicleType]:
+    if approx_weight_kg is None:
+        return vehicles
+    return [v for v in vehicles if v.capacity_kg >= approx_weight_kg]
+
+
 async def estimate_all(
     db: AsyncSession,
     pickup_lat: float,
     pickup_lng: float,
     drop_lat: float,
     drop_lng: float,
+    approx_weight_kg: float | None = None,
 ) -> tuple[int, int, list[FareOption]]:
     """Returns (distance_m, eta_minutes, options)."""
     distance_m = road_distance_m(pickup_lat, pickup_lng, drop_lat, drop_lng)
     eta = eta_minutes(distance_m)
 
+    vehicles = _filter_by_capacity(await load_active_vehicle_types(db), approx_weight_kg)
     options = [
         FareOption(
             vehicle_type_code=v.code,
@@ -60,6 +80,6 @@ async def estimate_all(
             distance_m=distance_m,
             eta_minutes=eta,
         )
-        for v in await load_active_vehicle_types(db)
+        for v in vehicles
     ]
     return distance_m, eta, options

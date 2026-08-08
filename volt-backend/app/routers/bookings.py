@@ -11,7 +11,7 @@ from app.schemas.booking import (
     EstimateResponse,
 )
 from app.services import booking as booking_service
-from app.services.fare import VehicleTypeNotFound, estimate_all
+from app.services.fare import VehicleCapacityExceeded, VehicleTypeNotFound, estimate_all
 
 router = APIRouter(prefix="/api/v1/bookings", tags=["bookings"])
 
@@ -27,6 +27,7 @@ async def estimate_fare(
         payload.pickup.lng,
         payload.drop.lat,
         payload.drop.lng,
+        payload.approx_weight_kg,
     )
     return EstimateResponse(
         distance_m=distance_m, eta_minutes=eta, options=options
@@ -49,6 +50,11 @@ async def create_booking(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown vehicle type: {payload.vehicle_type_code}",
+        )
+    except VehicleCapacityExceeded as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
         )
     return BookingResponse.model_validate(created)
 
