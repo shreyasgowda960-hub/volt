@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     database_url: str
     environment: str = "development"
+    firebase_credentials_path: str = "secrets/firebase-service-account.json"
 
 
 @lru_cache

@@ -1,10 +1,10 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_colors.dart';
 import '../application/auth_providers.dart';
-import '../data/fake_auth_repository.dart';
 import '../domain/volt_session.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
@@ -52,6 +52,17 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
           );
       if (!mounted) return;
       ref.read(sessionProvider.notifier).signIn(session);
+
+      // TEMPORARY, for spec 005 step A10 only: prints the ID token so it can
+      // be copied for manual API testing. Stripped from release builds by
+      // the assert wrapper. Delete once spec 006 lands.
+      assert(() {
+        FirebaseAuth.instance.currentUser?.getIdToken().then(
+              (t) => debugPrint('ID_TOKEN=$t'),
+            );
+        return true;
+      }());
+
       // Root widget swaps to the home screen; clear the auth stack above it.
       Navigator.of(context).popUntil((route) => route.isFirst);
     } on InvalidOtpException {
@@ -123,16 +134,6 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                     : const Text('Verify'),
               ),
               const Spacer(),
-              Center(
-                child: Text(
-                  'dev build — the code is ${FakeAuthRepository.devCode}',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
             ],
           ),
         ),

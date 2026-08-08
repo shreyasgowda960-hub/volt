@@ -1,16 +1,30 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from sqlalchemy import text
 
+from app.auth import init_firebase
 from app.config import get_settings
 from app.database import engine
+from app.routers import bookings
 
 settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_firebase()
+    yield
+
 
 app = FastAPI(
     title="VOLT API",
     version="0.1.0",
     docs_url="/docs",
+    lifespan=lifespan,
 )
+
+app.include_router(bookings.router)
 
 
 @app.get("/api/v1/health")

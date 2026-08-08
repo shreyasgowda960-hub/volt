@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "73473452706",
+    "project_id": "volt-2b36f",
+    "storage_bucket": "volt-2b36f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:73473452706:android:0f6d22a4c39a5bc39cc5fb",
+        "android_client_info": {
+          "package_name": "in.volt.customer"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDe37ttlPO3MC8bz9P2ztN5o4uQrZZgB-M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -10,9 +10,9 @@
 **/.flutter-plugins-dependencies
 **/*.iml
 
-# Firebase config
-**/google-services.json
-**/GoogleService-Info.plist
+# Firebase Admin service account — REAL SECRET, grants project admin
+volt-backend/secrets/
+*-service-account.json
 
 # Python
 __pycache__/

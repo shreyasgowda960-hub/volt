@@ -93,17 +93,30 @@ Phase 1, customer app. Working on device (RMX3371, Android 14).
 Built: phone entry → OTP → booking home → vehicle select → simulated status.
 All client-side. No database, nothing persists across app restart.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
-Fakes in place behind interfaces: FakeAuthRepository, FareEstimator,
-BookingStatusNotifier's scripted timer.
+Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
+FakeAuthRepository kept behind the same interface for tests/offline work,
+not wired up by default. FareEstimator and BookingStatusNotifier's scripted
+timer are still client-side fakes.
 Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
 
 Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
-Health endpoint at /api/v1/health confirms DB connectivity. No real endpoints
-yet — routers/services are spec 004.
+Health endpoint at /api/v1/health confirms DB connectivity.
 Postgres: local install (v18), database volt_dev.
 Money convention: integer paise, columns suffixed _paise.
 
 Schema: users, drivers, vehicle_types, bookings. Alembic configured (async
-template), 2 migrations applied. Money is integer paise everywhere. Bookings
-snapshot their quoted rates so pricing changes never rewrite past bookings.
-Status derived from per-transition timestamps; cancelled and expired distinct.
+template, compare_server_default=True), 3 migrations applied. Money is
+integer paise everywhere. Bookings snapshot their quoted rates so pricing
+changes never rewrite past bookings. Status derived from per-transition
+timestamps; cancelled and expired distinct.
+
+API: POST /api/v1/bookings/estimate, POST /api/v1/bookings,
+GET /api/v1/bookings/{public_code}. Fare is computed server-side from the
+vehicle_types table and snapshotted onto each booking.
+
+Auth: Firebase phone OTP end to end. Client uses FirebaseAuthRepository behind
+the AuthRepository interface. Server verifies ID tokens via firebase-admin;
+get_current_user is the only source of caller identity. Bookings enforce
+ownership and return 404 (not 403) for another user's booking.
+POST /bookings/estimate stays public by design.
+Service account key at volt-backend/secrets/ — gitignored, never commit.
