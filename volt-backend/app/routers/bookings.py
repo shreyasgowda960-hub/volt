@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
@@ -57,6 +57,16 @@ async def create_booking(
             detail=str(e),
         )
     return BookingResponse.model_validate(created)
+
+
+@router.get("", response_model=list[BookingResponse])
+async def list_bookings(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[BookingResponse]:
+    bookings = await booking_service.list_bookings_for_user(db, user.id, limit)
+    return [BookingResponse.model_validate(b) for b in bookings]
 
 
 @router.get("/{public_code}", response_model=BookingResponse)

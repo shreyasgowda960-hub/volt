@@ -57,17 +57,25 @@ final bookingRepositoryProvider = Provider<BookingRepository>((ref) {
   return RemoteBookingRepository(ref.watch(apiClientProvider));
 });
 
-final fareEstimatesProvider =
-    FutureProvider.family<List<FareEstimate>, double>((ref, approxWeightKg) async {
-  final pickup = ref.watch(pickupLocationProvider);
-  final drop = ref.watch(dropLocationProvider);
-  if (pickup == null || drop == null) return const [];
-  return ref.watch(fareEstimatorProvider).estimateAll(
-        pickup,
-        drop,
-        approxWeightKg: approxWeightKg,
-      );
-});
+final fareEstimatesProvider = FutureProvider.family<List<FareEstimate>, double>(
+  (ref, approxWeightKg) async {
+    final pickup = ref.watch(pickupLocationProvider);
+    final drop = ref.watch(dropLocationProvider);
+    if (pickup == null || drop == null) return const [];
+    return ref.watch(fareEstimatorProvider).estimateAll(
+          pickup,
+          drop,
+          approxWeightKg: approxWeightKg,
+        );
+  },
+  // Explicit rather than Riverpod's default (10 attempts, up to 6.4s apart):
+  // that ceiling leaves the manual Retry button racing an invisible
+  // background retry for up to ~38s. 3 attempts total, same backoff shape,
+  // gives up quickly enough that Retry is the only thing the user is
+  // actually waiting on.
+  retry: (retryCount, error) =>
+      ProviderContainer.defaultRetry(retryCount, error, maxRetries: 2),
+);
 
 final bookingByCodeProvider =
     FutureProvider.family<Booking, String>((ref, publicCode) async {

@@ -71,3 +71,15 @@ async def get_booking_by_code(
         select(Booking).where(Booking.public_code == public_code)
     )
     return result.scalar_one_or_none()
+
+
+async def list_bookings_for_user(
+    db: AsyncSession, customer_id: int, limit: int
+) -> list[Booking]:
+    result = await db.execute(
+        select(Booking)
+        .where(Booking.customer_id == customer_id)
+        .order_by(Booking.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())

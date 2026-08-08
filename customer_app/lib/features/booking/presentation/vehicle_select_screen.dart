@@ -35,6 +35,11 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
     if (_booking) return;
     setState(() => _booking = true);
     try {
+      // Must stay a ref.read() call inside this handler, never a
+      // FutureProvider watched from build(). A FutureProvider that throws
+      // gets Riverpod's automatic retry — silently POSTing a second (or
+      // third) booking for the same tap, with no idempotency key on the
+      // server to collapse them into one.
       final booking = await ref.read(bookingRepositoryProvider).create(
             pickup: pickup,
             drop: drop,

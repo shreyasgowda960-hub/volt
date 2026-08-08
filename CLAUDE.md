@@ -54,6 +54,7 @@ volt-backend/
 
 **Flutter**
 - Feature-first folder structure. One state management solution, chosen once and used consistently. No business logic inside widgets — services/repositories handle it.
+- A call that creates/mutates something (bookings, payments, etc.) must be a `ref.read()` inside an event handler, never a `FutureProvider` watched from `build()`. Riverpod auto-retries a failed `FutureProvider`, and there's no server-side idempotency key — a mutation wrapped that way silently fires twice.
 
 **Git**
 - Feature branches, conventional commit messages, small commits.
