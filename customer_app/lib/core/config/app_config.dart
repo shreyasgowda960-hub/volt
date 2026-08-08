@@ -11,4 +11,9 @@ abstract final class AppConfig {
   );
 
   static bool get isConfigured => apiBaseUrl.isNotEmpty;
+
+  // Render's free plan sleeps when idle and cold-starts in 30-60s; a local
+  // dev server that isn't answering in 10s is just down. ApiClient and the
+  // vehicle select screen both key off this rather than the raw string.
+  static bool get isRemote => apiBaseUrl.startsWith('https');
 }

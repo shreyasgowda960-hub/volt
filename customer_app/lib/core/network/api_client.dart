@@ -22,8 +22,8 @@ class ApiClient {
         _dio = dio ?? Dio() {
     _dio.options
       ..baseUrl = AppConfig.apiBaseUrl
-      ..connectTimeout = const Duration(seconds: 10)
-      ..receiveTimeout = const Duration(seconds: 15)
+      ..connectTimeout = Duration(seconds: AppConfig.isRemote ? 60 : 10)
+      ..receiveTimeout = Duration(seconds: AppConfig.isRemote ? 60 : 15)
       ..contentType = 'application/json';
 
     _dio.interceptors.add(

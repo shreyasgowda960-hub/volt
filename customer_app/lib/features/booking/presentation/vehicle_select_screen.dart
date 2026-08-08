@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/config/app_config.dart';
 import '../../../core/network/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../auth/application/auth_providers.dart';
@@ -71,7 +72,7 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
           children: [
             Expanded(
               child: estimates.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () => const _EstimatesLoadingIndicator(),
                 error: (error, _) => Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
@@ -146,6 +147,51 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _EstimatesLoadingIndicator extends StatefulWidget {
+  const _EstimatesLoadingIndicator();
+
+  @override
+  State<_EstimatesLoadingIndicator> createState() =>
+      _EstimatesLoadingIndicatorState();
+}
+
+class _EstimatesLoadingIndicatorState extends State<_EstimatesLoadingIndicator> {
+  bool _showWakingMessage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (AppConfig.isRemote) {
+      Future<void>.delayed(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _showWakingMessage = true);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          if (_showWakingMessage) ...[
+            const SizedBox(height: 16),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                'Waking up the server, this can take a minute on the first request.',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
