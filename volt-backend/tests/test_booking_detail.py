@@ -7,6 +7,7 @@ once the trip ends" are both one careless field addition away from being
 untrue, and neither would show up as a broken feature.
 """
 
+import asyncio
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -375,17 +376,37 @@ async def test_driver_facing_responses_carry_no_extra_fields():
     await _cleanup_driver(driver_phone)
 
 
-# --- IllegalTransition messages must never leak internals -------------
+# --- Refusals: plain language, and idempotent where the intent is met ---
+
+
+async def _timestamps(client, uid: str, phone: str, code: str) -> dict:
+    """Lifecycle timestamps as the customer endpoint reports them.
+
+    Read through the API rather than the DB on purpose: BookingDetailResponse
+    is where these are actually observable, so this checks the thing a caller
+    can see.
+    """
+    body = await _get_detail(client, uid, phone, code)
+    return {
+        "picked_up_at": body["picked_up_at"],
+        "delivered_at": body["delivered_at"],
+        "cancelled_at": body["cancelled_at"],
+    }
 
 
 @pytest.mark.asyncio
-async def test_repeated_pickup_returns_409_without_leaking_internals():
-    """The reported bug: a second pickup returned 409 with the detail
-    "Cannot move booking from BookingStatus.picked_up to
-    BookingStatus.picked_up" — Python enum reprs on a driver's screen.
+async def test_repeated_pickup_is_idempotent_and_does_not_restamp():
+    """A second pickup is success, not a conflict.
 
-    Asserts on absence, because a nicer message that still interpolates an
-    enum member somewhere would read fine in one case and leak in the next.
+    The reported bug was the 409 this used to return, whose detail read
+    "Cannot move booking from BookingStatus.picked_up to
+    BookingStatus.picked_up". The driver asked for the booking to be picked
+    up and it is, so 200 with the existing row is the honest answer.
+
+    The timestamp assertion is the important half: picked_up_at is the record
+    of when goods actually changed hands, and a retry must never move it. The
+    sleep guarantees a re-stamp would be visible — func.now() is transaction
+    start time, so two transactions 50ms apart get different values.
     """
     customer_phone = "+919000011007"
     driver_phone = "+919000011107"
@@ -402,28 +423,29 @@ async def test_repeated_pickup_returns_409_without_leaking_internals():
             first = await client.post(
                 f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS
             )
+        before = await _timestamps(client, "uid-detail-c7", customer_phone, code)
+
+        await asyncio.sleep(0.05)
+
+        with _mock_token("uid-detail-d7", driver_phone):
             second = await client.post(
                 f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS
             )
+        after = await _timestamps(client, "uid-detail-c7", customer_phone, code)
 
     assert first.status_code == 200
-    assert second.status_code == 409
-    detail = second.json()["detail"]
-    assert detail == "This booking has already been picked up"
-    assert "BookingStatus" not in detail
-    assert "->" not in detail
+    assert second.status_code == 200
+    assert second.json()["status"] == "picked_up"
+    assert second.json()["public_code"] == code
+    assert before["picked_up_at"] is not None
+    assert after["picked_up_at"] == before["picked_up_at"]
 
     await _cleanup_user(customer_phone)
     await _cleanup_driver(driver_phone)
 
 
 @pytest.mark.asyncio
-async def test_transition_refusals_are_all_plain_language():
-    """Every refusal a driver or customer can actually provoke.
-
-    Deliver-before-pickup, cancel-after-pickup and repeated-deliver each go
-    through a different route, and each used to format the status differently.
-    """
+async def test_repeated_deliver_is_idempotent_and_does_not_restamp():
     customer_phone = "+919000011008"
     driver_phone = "+919000011108"
     await _cleanup_user(customer_phone)
@@ -436,38 +458,116 @@ async def test_transition_refusals_are_all_plain_language():
 
         with _mock_token("uid-detail-d8", driver_phone):
             await client.post(f"/api/v1/bookings/{code}/accept", headers=_AUTH_HEADERS)
-            # Deliver before pickup.
-            early = await client.post(
+            await client.post(f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS)
+            await client.post(f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS)
+        before = await _timestamps(client, "uid-detail-c8", customer_phone, code)
+
+        await asyncio.sleep(0.05)
+
+        with _mock_token("uid-detail-d8", driver_phone):
+            second = await client.post(
+                f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS
+            )
+        after = await _timestamps(client, "uid-detail-c8", customer_phone, code)
+
+    assert second.status_code == 200
+    assert second.json()["status"] == "delivered"
+    assert before["delivered_at"] is not None
+    assert after["delivered_at"] == before["delivered_at"]
+
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)
+
+
+@pytest.mark.asyncio
+async def test_repeated_cancel_is_idempotent_and_does_not_restamp():
+    customer_phone = "+919000011009"
+    await _cleanup_user(customer_phone)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        code = await _create_booking(client, "uid-detail-c9", customer_phone)
+
+        with _mock_token("uid-detail-c9", customer_phone):
+            first = await client.post(
+                f"/api/v1/bookings/{code}/cancel",
+                json={"cancellation_reason": "Changed my mind"},
+                headers=_AUTH_HEADERS,
+            )
+        before = await _timestamps(client, "uid-detail-c9", customer_phone, code)
+
+        await asyncio.sleep(0.05)
+
+        with _mock_token("uid-detail-c9", customer_phone):
+            # Different reason on the retry. It must NOT overwrite the
+            # original, because no write happens on the idempotent path.
+            second = await client.post(
+                f"/api/v1/bookings/{code}/cancel",
+                json={"cancellation_reason": "Second thoughts"},
+                headers=_AUTH_HEADERS,
+            )
+        after = await _get_detail(client, "uid-detail-c9", customer_phone, code)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()["status"] == "cancelled"
+    assert after["cancelled_at"] == before["cancelled_at"]
+    assert after["cancellation_reason"] == "Changed my mind"
+
+    await _cleanup_user(customer_phone)
+
+
+@pytest.mark.asyncio
+async def test_genuine_illegal_transitions_still_conflict_in_plain_language():
+    """Idempotency covers only "already in the state you asked for".
+
+    Everything else is still a 409, and none of those details may carry a
+    Python enum repr. Asserted on absence, because a nicer message that still
+    interpolates an enum member somewhere would read fine in one case and
+    leak in the next.
+    """
+    customer_phone = "+919000011010"
+    driver_phone = "+919000011110"
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await _register_and_go_online(client, driver_phone, "uid-detail-d10")
+        code = await _create_booking(client, "uid-detail-c10", customer_phone)
+
+        with _mock_token("uid-detail-d10", driver_phone):
+            await client.post(f"/api/v1/bookings/{code}/accept", headers=_AUTH_HEADERS)
+            # Deliver before pickup: not the target state, so still refused.
+            early_deliver = await client.post(
                 f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS
             )
             await client.post(f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS)
 
-        # Cancel after pickup — the customer route, previously a hedge that
-        # listed three possible statuses because it could not tell which.
-        with _mock_token("uid-detail-c8", customer_phone):
+        # Cancel after pickup — the one the scope explicitly keeps as 409.
+        # Goods are already with the driver; that is a support problem.
+        with _mock_token("uid-detail-c10", customer_phone):
             late_cancel = await client.post(
                 f"/api/v1/bookings/{code}/cancel", headers=_AUTH_HEADERS
             )
 
-        with _mock_token("uid-detail-d8", driver_phone):
-            await client.post(f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS)
-            repeat_deliver = await client.post(
-                f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS
-            )
+        # And the booking really is still picked_up — the refused cancel
+        # changed nothing.
+        still = await _get_detail(client, "uid-detail-c10", customer_phone, code)
 
-    assert early.status_code == 409
-    assert early.json()["detail"] == "This booking has not been picked up yet"
+    assert early_deliver.status_code == 409
+    assert early_deliver.json()["detail"] == "This booking has not been picked up yet"
 
     assert late_cancel.status_code == 409
     assert late_cancel.json()["detail"] == "This booking has already been picked up"
 
-    assert repeat_deliver.status_code == 409
-    assert (
-        repeat_deliver.json()["detail"] == "This booking has already been delivered"
-    )
+    assert still["status"] == "picked_up"
+    assert still["cancelled_at"] is None
 
-    for resp in (early, late_cancel, repeat_deliver):
-        assert "BookingStatus" not in resp.json()["detail"]
+    for resp in (early_deliver, late_cancel):
+        detail = resp.json()["detail"]
+        assert "BookingStatus" not in detail
+        assert "->" not in detail
 
     await _cleanup_user(customer_phone)
     await _cleanup_driver(driver_phone)

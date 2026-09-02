@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from sqlalchemy import func, select, update
@@ -23,7 +24,44 @@ from app.services.fare import VehicleCapacityExceeded, _fare_paise, load_vehicle
 from app.utils.codes import generate_public_code
 from app.utils.distance import eta_minutes, road_distance_m
 
+logger = logging.getLogger(__name__)
+
 EXPIRY_MINUTES = 5
+
+# --- Idempotent re-requests ------------------------------------------------
+#
+# mark_picked_up, mark_delivered and cancel_booking each treat "the booking is
+# ALREADY in the status you asked for" as success (200 with the existing row)
+# rather than a 409 conflict. Every one of those branches is marked below,
+# because each looks like a missing check.
+#
+# Why: these three endpoints mean "put this booking into state X". If it is
+# already in state X, the caller's intent is satisfied and there is nothing to
+# report as a conflict. The case that makes this worth doing is not the
+# double-tap in the UI — it is a request that SUCCEEDED on the server and then
+# timed out at the client, which on a 50s cold start over a mobile network is
+# routine. The only sane retry is the same request again, and answering that
+# with an error tells a driver something is broken when nothing is. There are
+# no idempotency keys in this API to collapse such a retry any other way.
+#
+# Two properties hold on every idempotent path:
+#
+#   1. Nothing is written. The conditional UPDATE matched zero rows, so
+#      picked_up_at (and friends) keep their original values by construction,
+#      not by anyone remembering not to touch them. A retry can never move the
+#      record of when goods actually changed hands.
+#   2. The decision is made from the re-read AFTER the UPDATE, never from a
+#      pre-check. A pre-check would reintroduce exactly the race claim_booking
+#      exists to close.
+#
+# Ownership is already established before any of this: all three functions
+# raise BookingNotFound when the caller is not the booking's driver (or
+# customer), so only the party who made the original request can get the
+# idempotent 200.
+#
+# NOT applied to accept, deliberately. Accept does not mean "set status to
+# driver_assigned"; it means "claim this one for ME". A booking already held
+# by a different driver must stay a 409, and the atomic claim depends on it.
 
 
 async def _unique_public_code(db: AsyncSession) -> str:
@@ -301,6 +339,27 @@ async def mark_picked_up(db: AsyncSession, public_code: str, driver: Driver) -> 
         # Captured before rollback: rollback expires every ORM object, and
         # touching one afterwards raises MissingGreenlet on an async session.
         from_status = current.status if current is not None else booking.status
+
+        if current is not None and from_status == BookingStatus.picked_up:
+            # Idempotent, NOT a missing check. The caller asked for this
+            # booking to be picked up and it is picked up, so their intent is
+            # already satisfied — most likely a retry of a request that
+            # succeeded here and timed out at the client. See the module
+            # comment on idempotent re-requests for the full reasoning.
+            #
+            # commit(), not rollback(): the UPDATE above matched zero rows so
+            # there is nothing to undo, and this closes a read-only
+            # transaction honestly. It also keeps `current` usable —
+            # rollback() expires every ORM object, and reading one afterwards
+            # raises MissingGreenlet, whereas expire_on_commit=False leaves
+            # it populated. No write happened, so picked_up_at keeps its
+            # original value by construction.
+            logger.info(
+                "pickup already applied to %s, returning existing row", public_code
+            )
+            await db.commit()
+            return current
+
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.picked_up)
 
@@ -335,6 +394,27 @@ async def mark_delivered(db: AsyncSession, public_code: str, driver: Driver) -> 
         # Captured before rollback: rollback expires every ORM object, and
         # touching one afterwards raises MissingGreenlet on an async session.
         from_status = current.status if current is not None else booking.status
+
+        if current is not None and from_status == BookingStatus.delivered:
+            # Idempotent, NOT a missing check. The caller asked for this
+            # booking to be delivered and it is delivered, so their intent is
+            # already satisfied — most likely a retry of a request that
+            # succeeded here and timed out at the client. See the module
+            # comment on idempotent re-requests for the full reasoning.
+            #
+            # commit(), not rollback(): the UPDATE above matched zero rows so
+            # there is nothing to undo, and this closes a read-only
+            # transaction honestly. It also keeps `current` usable —
+            # rollback() expires every ORM object, and reading one afterwards
+            # raises MissingGreenlet, whereas expire_on_commit=False leaves
+            # it populated. No write happened, so delivered_at keeps its
+            # original value by construction.
+            logger.info(
+                "deliver already applied to %s, returning existing row", public_code
+            )
+            await db.commit()
+            return current
+
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.delivered)
 
@@ -380,6 +460,27 @@ async def cancel_booking(
         # Captured before rollback: rollback expires every ORM object, and
         # touching one afterwards raises MissingGreenlet on an async session.
         from_status = current.status if current is not None else booking.status
+
+        if current is not None and from_status == BookingStatus.cancelled:
+            # Idempotent, NOT a missing check. The caller asked for this
+            # booking to be cancelled and it is cancelled, so their intent is
+            # already satisfied — most likely a retry of a request that
+            # succeeded here and timed out at the client. See the module
+            # comment on idempotent re-requests for the full reasoning.
+            #
+            # commit(), not rollback(): the UPDATE above matched zero rows so
+            # there is nothing to undo, and this closes a read-only
+            # transaction honestly. It also keeps `current` usable —
+            # rollback() expires every ORM object, and reading one afterwards
+            # raises MissingGreenlet, whereas expire_on_commit=False leaves
+            # it populated. No write happened, so cancelled_at keeps its
+            # original value by construction.
+            logger.info(
+                "cancel already applied to %s, returning existing row", public_code
+            )
+            await db.commit()
+            return current
+
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.cancelled)
 

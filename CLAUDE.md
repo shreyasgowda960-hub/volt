@@ -238,6 +238,27 @@ A failed poll must never clear the last known good state. First load fails
 create-booking and accept, which are mutations and must never sit in a
 provider at all.
 
+Pickup, deliver and cancel are idempotent when the booking is already in
+the status asked for: 200 with the existing row, not 409. These endpoints
+mean "put this booking into state X", so if it is already in X the caller's
+intent is met. The case it exists for is not a UI double-tap but a request
+that succeeded here and timed out at the client — routine on a 50s cold
+start over mobile — where the only sane retry is the same request. Nothing
+is written on that path (the conditional UPDATE matched zero rows), so
+picked_up_at and friends keep their original values by construction. The
+decision is made from the re-read AFTER the UPDATE, never a pre-check, which
+would reintroduce the race claim_booking exists to close.
+
+Deliberately NOT accept: that means "claim this for ME", not "set status to
+driver_assigned", so a booking held by another driver must stay 409. Also
+NOT cancel-after-pickup — the goods are with the driver, which is a support
+problem. Both are covered by tests.
+
+IllegalTransition carries two messages. str(e) is for the log; user_message
+is the only one that may leave the server, keyed on the booking's current
+status. This is not cosmetic: Python 3.14 renders f"{BookingStatus.picked_up}"
+as "BookingStatus.picked_up", and that string was reaching drivers.
+
 Response schemas are per audience, not per model. Customers get
 BookingDetailResponse (driver details + lifecycle timestamps); drivers get
 the narrower BookingResponse. Do NOT add driver contact fields, or anything
