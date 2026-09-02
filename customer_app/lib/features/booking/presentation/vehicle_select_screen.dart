@@ -2,11 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:volt_core/volt_core.dart';
 
-import '../../../core/config/app_config.dart';
-import '../../../core/network/api_client.dart';
-import '../../../core/theme/app_colors.dart';
-import '../../auth/application/auth_providers.dart';
 import '../application/booking_providers.dart';
 import '../domain/fare_estimate.dart';
 import '../domain/location.dart';

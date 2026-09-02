@@ -1,4 +1,5 @@
-import '../../../core/network/api_client.dart';
+import 'package:volt_core/volt_core.dart';
+
 import '../domain/fare_estimate.dart';
 import '../domain/location.dart';
 import '../domain/vehicle_type.dart';

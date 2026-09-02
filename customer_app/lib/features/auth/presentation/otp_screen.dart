@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-
-import '../../../core/theme/app_colors.dart';
-import '../application/auth_providers.dart';
-import '../domain/volt_session.dart';
+import 'package:volt_core/volt_core.dart';
 
 class OtpScreen extends ConsumerStatefulWidget {
   const OtpScreen({

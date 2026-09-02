@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:volt_core/volt_core.dart';
 
-import '../../../core/network/api_client.dart';
-import '../../auth/application/auth_providers.dart';
 import '../data/booking_repository.dart';
 import '../data/fare_estimator.dart';
 import '../data/remote_fare_estimator.dart';

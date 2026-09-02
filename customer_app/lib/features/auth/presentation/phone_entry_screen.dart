@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:volt_core/volt_core.dart';
 
-import '../../../core/theme/app_colors.dart';
-import '../application/auth_providers.dart';
 import 'otp_screen.dart';
 
 class PhoneEntryScreen extends ConsumerStatefulWidget {

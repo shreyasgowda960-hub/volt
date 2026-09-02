@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:volt_core/volt_core.dart';
 
-import '../../../core/network/api_client.dart';
-import '../../../core/theme/app_colors.dart';
 import '../application/booking_providers.dart';
 import '../domain/booking.dart';
 import '../domain/booking_status.dart';
