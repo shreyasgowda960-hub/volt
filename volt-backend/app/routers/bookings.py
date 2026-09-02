@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +27,8 @@ from app.services.booking_lifecycle import (
     VehicleTypeMismatch,
 )
 from app.services.fare import VehicleCapacityExceeded, VehicleTypeNotFound, estimate_all
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/bookings", tags=["bookings"])
 
@@ -148,7 +152,13 @@ async def pickup_booking(
             status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found"
         )
     except IllegalTransition as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        # Technical detail to the log, plain language to the driver. The old
+        # detail=str(e) put "Cannot move booking from BookingStatus.picked_up
+        # to BookingStatus.picked_up" on a driver's screen.
+        logger.info("pickup refused for %s: %s", public_code, e)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=e.user_message
+        )
     return BookingResponse.model_validate(updated)
 
 
@@ -165,7 +175,10 @@ async def deliver_booking(
             status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found"
         )
     except IllegalTransition as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        logger.info("deliver refused for %s: %s", public_code, e)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=e.user_message
+        )
     return BookingResponse.model_validate(updated)
 
 
@@ -184,10 +197,12 @@ async def cancel_booking(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found"
         )
-    except IllegalTransition:
+    except IllegalTransition as e:
+        # Was a hedge listing three possibilities ("picked up, delivered, or
+        # cancelled") because the route could not tell which. user_message
+        # knows the actual current status, so say that instead.
+        logger.info("cancel refused for %s: %s", public_code, e)
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This booking can no longer be cancelled — it's already "
-            "been picked up, delivered, or cancelled",
+            status_code=status.HTTP_409_CONFLICT, detail=e.user_message
         )
     return BookingResponse.model_validate(cancelled)

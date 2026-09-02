@@ -293,7 +293,14 @@ async def mark_picked_up(db: AsyncSession, public_code: str, driver: Driver) -> 
         .returning(Booking.id)
     )
     if result.scalar_one_or_none() is None:
-        from_status = booking.status  # capture before rollback expires it
+        # Re-read rather than trust the SELECT at the top of this function.
+        # Under READ COMMITTED that snapshot can be stale by now, and naming
+        # the wrong current status sends whoever reads the log hunting the
+        # wrong bug. Same reasoning as claim_booking's zero-rows branch.
+        current = await get_booking_by_code(db, public_code)
+        # Captured before rollback: rollback expires every ORM object, and
+        # touching one afterwards raises MissingGreenlet on an async session.
+        from_status = current.status if current is not None else booking.status
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.picked_up)
 
@@ -320,7 +327,14 @@ async def mark_delivered(db: AsyncSession, public_code: str, driver: Driver) -> 
         .returning(Booking.id)
     )
     if result.scalar_one_or_none() is None:
-        from_status = booking.status  # capture before rollback expires it
+        # Re-read rather than trust the SELECT at the top of this function.
+        # Under READ COMMITTED that snapshot can be stale by now, and naming
+        # the wrong current status sends whoever reads the log hunting the
+        # wrong bug. Same reasoning as claim_booking's zero-rows branch.
+        current = await get_booking_by_code(db, public_code)
+        # Captured before rollback: rollback expires every ORM object, and
+        # touching one afterwards raises MissingGreenlet on an async session.
+        from_status = current.status if current is not None else booking.status
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.delivered)
 
@@ -358,7 +372,14 @@ async def cancel_booking(
         .returning(Booking.id)
     )
     if result.scalar_one_or_none() is None:
-        from_status = booking.status  # capture before rollback expires it
+        # Re-read rather than trust the SELECT at the top of this function.
+        # Under READ COMMITTED that snapshot can be stale by now, and naming
+        # the wrong current status sends whoever reads the log hunting the
+        # wrong bug. Same reasoning as claim_booking's zero-rows branch.
+        current = await get_booking_by_code(db, public_code)
+        # Captured before rollback: rollback expires every ORM object, and
+        # touching one afterwards raises MissingGreenlet on an async session.
+        from_status = current.status if current is not None else booking.status
         await db.rollback()
         raise IllegalTransition(from_status, BookingStatus.cancelled)
 

@@ -45,11 +45,46 @@ def can_transition(from_status: BookingStatus, to_status: BookingStatus) -> bool
     return to_status in _LEGAL_TRANSITIONS.get(from_status, set())
 
 
+# What a caller is actually told when a transition is refused.
+#
+# Keyed on the booking's CURRENT status, not on the illegal move, because the
+# current state is the part that is useful: "already picked up" tells a driver
+# what happened, where "cannot move from X to Y" only describes our state
+# machine. It also happened to describe it in Python: f"{BookingStatus.picked_up}"
+# renders as "BookingStatus.picked_up", and that string was reaching drivers.
+_STATE_MESSAGE: dict[BookingStatus, str] = {
+    BookingStatus.pending: "No driver has accepted this booking yet",
+    BookingStatus.driver_assigned: "This booking has not been picked up yet",
+    BookingStatus.picked_up: "This booking has already been picked up",
+    BookingStatus.delivered: "This booking has already been delivered",
+    BookingStatus.cancelled: "This booking was cancelled",
+    BookingStatus.expired: "This booking expired before a driver accepted it",
+}
+
+
 class IllegalTransition(Exception):
+    """Refused state change.
+
+    Carries two messages on purpose. str(e) is for the log and names the
+    statuses; user_message is the only one that may leave the server.
+    """
+
     def __init__(self, from_status: BookingStatus, to_status: BookingStatus):
         self.from_status = from_status
         self.to_status = to_status
-        super().__init__(f"Cannot move booking from {from_status} to {to_status}")
+        # .value rather than the enum member, so that even a careless
+        # detail=str(e) somewhere in the future cannot leak
+        # "BookingStatus.picked_up" into an HTTP response.
+        super().__init__(
+            f"illegal transition {from_status.value} -> {to_status.value}"
+        )
+
+    @property
+    def user_message(self) -> str:
+        """Safe to return over HTTP. No status codes, no enum reprs."""
+        return _STATE_MESSAGE.get(
+            self.from_status, "This booking can no longer be updated"
+        )
 
 
 class BookingAlreadyClaimed(Exception):

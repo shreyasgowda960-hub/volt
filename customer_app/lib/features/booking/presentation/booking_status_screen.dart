@@ -83,33 +83,50 @@ class _BookingStatusScreenState extends ConsumerState<BookingStatusScreen> {
     );
   }
 
+  /// Same guard, same reason as the driver app's pickup and deliver buttons:
+  /// the flag is taken before the dialog opens, not after it resolves. With
+  /// it taken afterwards, the Cancel button stays enabled for the dialog's
+  /// dismissal animation and a tap in that window sends a second cancel.
   Future<void> _cancel() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel this booking?'),
-        // No fee messaging: cancellation is free before pickup (phase 1
-        // decision), and inventing a warning would imply otherwise.
-        content: const Text(
-          "You won't be charged. If a driver is already assigned, they'll be "
-          'released to take other jobs.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep booking'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel booking'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
+    if (_cancelling) return;
     setState(() => _cancelling = true);
+
     try {
+      var answered = false;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Cancel this booking?'),
+          // No fee messaging: cancellation is free before pickup (phase 1
+          // decision), and inventing a warning would imply otherwise.
+          content: const Text(
+            "You won't be charged. If a driver is already assigned, they'll "
+            'be released to take other jobs.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                if (answered) return;
+                answered = true;
+                Navigator.pop(dialogContext, false);
+              },
+              child: const Text('Keep booking'),
+            ),
+            FilledButton(
+              onPressed: () {
+                // Latched: a double-tap here would pop the dialog and then
+                // pop the status screen itself.
+                if (answered) return;
+                answered = true;
+                Navigator.pop(dialogContext, true);
+              },
+              child: const Text('Cancel booking'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
       // ref.read in a handler, never a watched provider: this mutates. A
       // FutureProvider would hand it Riverpod's auto-retry, and a retried
       // cancel on a booking a driver has since picked up would 409 in a loop.

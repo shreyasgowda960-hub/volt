@@ -373,3 +373,101 @@ async def test_driver_facing_responses_carry_no_extra_fields():
 
     await _cleanup_user(customer_phone)
     await _cleanup_driver(driver_phone)
+
+
+# --- IllegalTransition messages must never leak internals -------------
+
+
+@pytest.mark.asyncio
+async def test_repeated_pickup_returns_409_without_leaking_internals():
+    """The reported bug: a second pickup returned 409 with the detail
+    "Cannot move booking from BookingStatus.picked_up to
+    BookingStatus.picked_up" — Python enum reprs on a driver's screen.
+
+    Asserts on absence, because a nicer message that still interpolates an
+    enum member somewhere would read fine in one case and leak in the next.
+    """
+    customer_phone = "+919000011007"
+    driver_phone = "+919000011107"
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await _register_and_go_online(client, driver_phone, "uid-detail-d7")
+        code = await _create_booking(client, "uid-detail-c7", customer_phone)
+
+        with _mock_token("uid-detail-d7", driver_phone):
+            await client.post(f"/api/v1/bookings/{code}/accept", headers=_AUTH_HEADERS)
+            first = await client.post(
+                f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS
+            )
+            second = await client.post(
+                f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS
+            )
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+    detail = second.json()["detail"]
+    assert detail == "This booking has already been picked up"
+    assert "BookingStatus" not in detail
+    assert "->" not in detail
+
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)
+
+
+@pytest.mark.asyncio
+async def test_transition_refusals_are_all_plain_language():
+    """Every refusal a driver or customer can actually provoke.
+
+    Deliver-before-pickup, cancel-after-pickup and repeated-deliver each go
+    through a different route, and each used to format the status differently.
+    """
+    customer_phone = "+919000011008"
+    driver_phone = "+919000011108"
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        await _register_and_go_online(client, driver_phone, "uid-detail-d8")
+        code = await _create_booking(client, "uid-detail-c8", customer_phone)
+
+        with _mock_token("uid-detail-d8", driver_phone):
+            await client.post(f"/api/v1/bookings/{code}/accept", headers=_AUTH_HEADERS)
+            # Deliver before pickup.
+            early = await client.post(
+                f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS
+            )
+            await client.post(f"/api/v1/bookings/{code}/pickup", headers=_AUTH_HEADERS)
+
+        # Cancel after pickup — the customer route, previously a hedge that
+        # listed three possible statuses because it could not tell which.
+        with _mock_token("uid-detail-c8", customer_phone):
+            late_cancel = await client.post(
+                f"/api/v1/bookings/{code}/cancel", headers=_AUTH_HEADERS
+            )
+
+        with _mock_token("uid-detail-d8", driver_phone):
+            await client.post(f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS)
+            repeat_deliver = await client.post(
+                f"/api/v1/bookings/{code}/deliver", headers=_AUTH_HEADERS
+            )
+
+    assert early.status_code == 409
+    assert early.json()["detail"] == "This booking has not been picked up yet"
+
+    assert late_cancel.status_code == 409
+    assert late_cancel.json()["detail"] == "This booking has already been picked up"
+
+    assert repeat_deliver.status_code == 409
+    assert (
+        repeat_deliver.json()["detail"] == "This booking has already been delivered"
+    )
+
+    for resp in (early, late_cancel, repeat_deliver):
+        assert "BookingStatus" not in resp.json()["detail"]
+
+    await _cleanup_user(customer_phone)
+    await _cleanup_driver(driver_phone)

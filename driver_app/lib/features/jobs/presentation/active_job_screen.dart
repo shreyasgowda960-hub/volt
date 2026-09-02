@@ -26,23 +26,52 @@ class _ActiveJobScreenState extends ConsumerState<ActiveJobScreen> {
   bool _announcedCancellation = false;
 
   Future<bool> _confirm(String title) async {
+    // Latched so neither button can pop twice. During the dismissal
+    // animation the button is still mounted and still hittable, so a fast
+    // double-tap on Confirm pops the dialog and then pops this screen out
+    // from under the driver.
+    var answered = false;
+
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: Text(title),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
+            onPressed: () {
+              if (answered) return;
+              answered = true;
+              Navigator.pop(dialogContext, false);
+            },
+            child: const Text('Cancel'),
+          ),
           FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Confirm')),
+            onPressed: () {
+              if (answered) return;
+              answered = true;
+              Navigator.pop(dialogContext, true);
+            },
+            child: const Text('Confirm'),
+          ),
         ],
       ),
     );
     return result ?? false;
   }
 
+  /// Runs one lifecycle transition, guarded against firing twice.
+  ///
+  /// The guard is taken BEFORE the confirmation dialog opens, not after it
+  /// resolves, and that ordering is the entire fix. Previously `_working`
+  /// went true only once `_confirm` completed — which is when the dialog has
+  /// finished animating out. For those ~200ms the modal barrier is fading
+  /// while the button underneath is still enabled, so a tap in that window
+  /// opened a second dialog and sent a second POST. The server answered the
+  /// second one with 409 "already picked up", which is correct, and looked
+  /// like a bug to the driver.
+  ///
+  /// The early return makes it re-entrant-safe too: a tap that slips through
+  /// on a stale frame is dropped, never queued.
   Future<void> _advance(
     String title,
     Future<Job> Function(String code) action, {
@@ -50,12 +79,13 @@ class _ActiveJobScreenState extends ConsumerState<ActiveJobScreen> {
     bool popOnSuccess = false,
     String? successMessage,
   }) async {
-    if (!await _confirm(title)) return;
+    if (_working) return;
     setState(() {
       _working = true;
       _error = null;
     });
     try {
+      if (!await _confirm(title)) return;
       // ref.read in a handler — these mutate. Riverpod's auto-retry on a
       // watched provider would re-POST a pickup or a delivery.
       final updated = await action(code);
