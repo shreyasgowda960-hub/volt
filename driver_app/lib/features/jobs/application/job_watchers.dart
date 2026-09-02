@@ -28,7 +28,12 @@ class JobBoardWatcher extends AsyncNotifier<List<Job>> {
     });
 
     final jobs = await _fetch();
-    _poller = Poller(interval: _interval, onTick: _poll)..start();
+    // fetchImmediately: false — the line above is the initial fetch.
+    // Leaving it on double-requested the board on every open and every
+    // invalidate, which is what showed up as two GET /drivers/jobs 70ms
+    // apart after a delivery.
+    _poller = Poller(interval: _interval, onTick: _poll)
+      ..start(fetchImmediately: false);
     return jobs;
   }
 
@@ -89,7 +94,8 @@ class ActiveJobWatcher extends AsyncNotifier<Job?> {
     // provider, so there is nothing a timer here could discover.
     if (job != null) {
       _watchedCode = job.publicCode;
-      _poller = Poller(interval: _interval, onTick: _poll)..start();
+      _poller = Poller(interval: _interval, onTick: _poll)
+        ..start(fetchImmediately: false);
     }
 
     return job;
@@ -135,14 +141,36 @@ class ActiveJobWatcher extends AsyncNotifier<Job?> {
 
   Future<void> refreshNow() => _poll();
 
-  /// Replaces the tracked job after a local action (pickup, deliver) so the
-  /// screen updates immediately instead of waiting up to 5s for the next
-  /// tick. Terminal statuses also stop the poller, since nothing follows.
+  /// Replaces the tracked job after a local action (accept, pickup, deliver)
+  /// so the screen updates immediately instead of waiting up to 5s for the
+  /// next tick.
+  ///
+  /// Also arms the poller, which is not incidental. [build] deliberately
+  /// starts no poller when the driver holds nothing, and accept hands in the
+  /// first job through here — so without this the job a driver is staring at
+  /// immediately after accepting was the one job never being polled, and a
+  /// customer cancelling while they drove to the pickup would go unnoticed
+  /// until they navigated away and back. That is the exact scenario this
+  /// watcher exists for.
   void applyLocalUpdate(Job job) {
     if (_disposed) return;
     _watchedCode = job.publicCode;
     state = AsyncData(job);
-    if (!job.status.isActive) _poller?.stopForever();
+
+    if (!job.status.isActive) {
+      _poller?.stopForever();
+      return;
+    }
+
+    // A stopped Poller cannot be revived by design, so a new job needs a new
+    // one. In practice the accept path invalidates this provider afterwards
+    // and build() would rebuild it anyway, but depending on that ordering to
+    // get polling started is exactly how this broke the first time.
+    if (_poller == null || _poller!.isStopped) {
+      _poller?.dispose();
+      _poller = Poller(interval: _interval, onTick: _poll);
+    }
+    _poller!.start(fetchImmediately: false);
   }
 }
 

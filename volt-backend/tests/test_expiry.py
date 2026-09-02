@@ -7,7 +7,11 @@ from app.database import SessionLocal
 from app.models.booking import Booking, BookingStatus
 from app.models.user import User
 from app.schemas.booking import BookingCreate, LocationIn
-from app.services.booking import create_booking, expire_stale_bookings
+from app.services.booking import (
+    create_booking,
+    expire_stale_bookings,
+    reset_expiry_throttle,
+)
 
 _PICKUP = LocationIn(address="Koramangala", lat=12.9352, lng=77.6245)
 _DROP = LocationIn(address="Whitefield", lat=12.9698, lng=77.75)
@@ -108,3 +112,49 @@ async def test_driver_assigned_booking_is_never_expired_even_if_old():
         assert booking.expired_at is None
 
         await _cleanup(db, phone)
+
+
+@pytest.mark.asyncio
+async def test_sweep_is_throttled_within_the_interval():
+    """The sweep must not run a write transaction on every request.
+
+    Polling made this matter: at a 5s interval each open screen dragged a
+    sweep along behind every request, roughly 12 a minute per active user,
+    almost all matching zero rows.
+
+    Backdates a booking far enough to be expirable, sweeps once, then creates
+    a second expirable booking and sweeps again immediately. The second call
+    must be suppressed and leave that booking pending.
+    """
+    phone_a = "+919000004101"
+    phone_b = "+919000004102"
+    async with SessionLocal() as db:
+        await _cleanup(db, phone_a)
+        await _cleanup(db, phone_b)
+
+        first = await _make_booking(db, phone_a)
+        await _backdate(db, first.id, 10)
+
+        swept = await expire_stale_bookings(db)
+        assert swept == 1
+
+        # Second booking, equally stale, but within the throttle window.
+        second = await _make_booking(db, phone_b)
+        await _backdate(db, second.id, 10)
+
+        suppressed = await expire_stale_bookings(db)
+        assert suppressed == 0
+
+        still_pending = (
+            await db.execute(select(Booking.status).where(Booking.id == second.id))
+        ).scalar_one()
+        assert still_pending == BookingStatus.pending
+
+        # Clearing the throttle is all that stands between it and expiry —
+        # proves the booking really was expirable and the throttle, not the
+        # WHERE clause, is what spared it.
+        reset_expiry_throttle()
+        assert await expire_stale_bookings(db) == 1
+
+        await _cleanup(db, phone_a)
+        await _cleanup(db, phone_b)

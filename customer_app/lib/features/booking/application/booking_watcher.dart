@@ -78,7 +78,9 @@ class BookingWatcher extends AsyncNotifier<BookingWatchState> {
     // first tick means one pointless request and 5s of spinner on something
     // that finished yesterday.
     if (!booking.status.isTerminal) {
-      _poller = Poller(interval: _interval, onTick: _poll)..start();
+      // fetchImmediately: false — build() just fetched, above.
+      _poller = Poller(interval: _interval, onTick: _poll)
+        ..start(fetchImmediately: false);
     }
 
     return BookingWatchState(booking: booking);

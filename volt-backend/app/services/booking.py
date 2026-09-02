@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import timedelta
 
 from sqlalchemy import func, select, update
@@ -27,6 +28,14 @@ from app.utils.distance import eta_minutes, road_distance_m
 logger = logging.getLogger(__name__)
 
 EXPIRY_MINUTES = 5
+
+# How often the lazy sweep is allowed to actually run a write transaction.
+# See expire_stale_bookings for why this exists and why per-process is fine.
+SWEEP_MIN_INTERVAL_SECONDS = 60
+
+# monotonic(), not time(): immune to NTP steps and DST, and only differences
+# are ever compared. None means "never swept in this process".
+_last_sweep_at: float | None = None
 
 # --- Idempotent re-requests ------------------------------------------------
 #
@@ -182,19 +191,57 @@ async def get_active_booking_for_driver(
     return result.scalar_one_or_none()
 
 
+def reset_expiry_throttle() -> None:
+    """Clears the sweep throttle. Test hook only.
+
+    The throttle is module state, so without this the first test to sweep
+    would silently suppress the sweep in every test that ran within the next
+    minute — an order-dependent failure, which is the worst kind to debug.
+    conftest resets it before every test.
+    """
+    global _last_sweep_at
+    _last_sweep_at = None
+
+
 async def expire_stale_bookings(db: AsyncSession) -> int:
     """Marks pending bookings older than EXPIRY_MINUTES as expired.
 
     Called at the start of endpoints that read booking state, rather than run
-    on a schedule. Idempotent and cheap — one UPDATE against an indexed
-    column, using the database's clock (func.now()) so app servers with
+    on a schedule. Uses the database's clock (func.now()) so app servers with
     slightly different clocks — or several of them — can't disagree about
     what counts as stale.
 
-    LIMITATION: if nobody calls the API, bookings stay pending past 5 minutes
-    until someone does. Acceptable now; replace with a scheduled job when
-    there is real traffic.
+    THROTTLED to once per SWEEP_MIN_INTERVAL_SECONDS per process. Polling made
+    this necessary: at a 5s interval every open screen dragged a write
+    transaction along behind every request — about 12 a minute per active
+    user, essentially all of them matching zero rows. Expiry does not need
+    second-level precision. A booking expires at 5 minutes rather than
+    5 minutes and a bit, and no caller can tell the difference.
+
+    The throttle is per-process on purpose. Several instances each sweep
+    independently, so the real interval is SWEEP_MIN_INTERVAL_SECONDS divided
+    by instance count — still a ~12x reduction, and the extra sweeps are
+    harmless because the UPDATE is idempotent. That is the same reasoning as
+    the limitation below: this is a best-effort sweep, not a scheduler, and
+    precision is not what it is for.
+
+    LIMITATION (unchanged): if nobody calls the API, bookings stay pending
+    past 5 minutes until someone does — now plus up to another minute.
+    Acceptable at this scale; replace the whole approach with a scheduled job
+    when there is real traffic.
     """
+    global _last_sweep_at
+
+    now = time.monotonic()
+    if _last_sweep_at is not None and now - _last_sweep_at < SWEEP_MIN_INTERVAL_SECONDS:
+        return 0
+
+    # Claimed before the await, not after. There is no await between the read
+    # above and this write, so on asyncio's single-threaded loop the
+    # check-and-set cannot interleave: a burst of concurrent requests
+    # produces exactly one sweep, not one per request.
+    _last_sweep_at = now
+
     result = await db.execute(
         update(Booking)
         .where(

@@ -286,6 +286,15 @@ async def test_list_bookings_loads_drivers_without_n_plus_one():
         assert accept.status_code == 200
 
         with _mock_token("uid-detail-c5", customer_phone):
+            # Unmeasured warm-up, purely to claim the expiry-sweep throttle.
+            # expire_stale_bookings runs at most once a minute per process, so
+            # without this the first measured request would carry a sweep
+            # (UPDATE + COMMIT) that the second one skips — the counts would
+            # differ by the sweep rather than by driver loading, which is what
+            # this test is about. With the throttle already claimed, neither
+            # measured request sweeps.
+            await client.get("/api/v1/bookings", headers=_AUTH_HEADERS)
+
             with _count_queries() as one_booking:
                 resp_one = await client.get("/api/v1/bookings", headers=_AUTH_HEADERS)
         assert resp_one.status_code == 200

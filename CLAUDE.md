@@ -176,9 +176,28 @@ against the committed row and matches nothing. Under REPEATABLE READ or
 SERIALIZABLE this would raise a serialization error instead and need retry
 handling — don't raise the isolation level without adding that.
 
-Expiry is lazy: expire_stale_bookings() runs at the top of GET /jobs, GET
-/bookings/{code}, and GET /bookings, not on a schedule. The effective window
-is "5 minutes plus however long until the next request," not 5 minutes.
+Expiry is lazy AND throttled: expire_stale_bookings() runs at the top of GET
+/jobs, GET /bookings/{code} and GET /bookings, but at most once per 60s per
+process (SWEEP_MIN_INTERVAL_SECONDS, module-level state in
+app/services/booking.py). Polling forced this — every open screen was
+dragging a write transaction behind every request, ~12/minute per active
+user, almost all matching zero rows. Per-process is deliberate: N instances
+each sweep independently, which is still a ~12x cut and harmless because the
+UPDATE is idempotent. Tests reset it via reset_expiry_throttle() in an
+autouse conftest fixture; without that, the first test to sweep suppresses
+sweeping in every test for the next minute, order-dependently.
+
+The sweep's predicate (status='pending' AND created_at < cutoff) is served by
+ix_bookings_pending_created_at, a partial index on created_at WHERE
+status='pending'. ix_bookings_status alone was never a seq scan, but it could
+only satisfy the status half: the plan bitmap-scanned every pending row and
+then filtered them all out. Measured on 200k rows / 5k pending / none
+expirable — the steady state — that was 5006 buffers and 4.7ms to update zero
+rows, scaling with pending count. With created_at in the index: 2 buffers,
+0.055ms.
+
+The effective window is "5 minutes plus however long until the next request,"
+not 5 minutes.
 Confirmed in real data: three bookings created minutes apart all came back
 with the same expired_at, because nothing hit the API in between and one
 sweep caught all three. Known debt — replace with a scheduled job once

@@ -69,8 +69,15 @@ class Poller {
   /// Runs [onTick] immediately, then every `interval` after that, and starts
   /// watching the app lifecycle.
   ///
+  /// Pass `fetchImmediately: false` when the owner has ALREADY loaded the
+  /// state this poller refreshes. A Riverpod notifier fetches in `build()` to
+  /// have something to return, so leaving this on made both fire for the same
+  /// data — two identical GETs about 90ms apart on every screen open, and
+  /// again on every invalidate. Resuming from the background still fetches
+  /// immediately regardless; that one is not a duplicate.
+  ///
   /// Safe to call more than once — the second call does nothing.
-  void start() {
+  void start({bool fetchImmediately = true}) {
     if (_disposed || _stopped) return;
 
     _lifecycle ??= AppLifecycleListener(
@@ -86,7 +93,7 @@ class Poller {
     _arm();
     // Fire-and-forget on purpose: start() is called from build() and must not
     // wait 50s for a cold start before the timer exists.
-    unawaited(_tick());
+    if (fetchImmediately) unawaited(_tick());
   }
 
   /// Stops polling for good. Idempotent, and not undone by a later [start] or

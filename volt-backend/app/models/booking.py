@@ -52,6 +52,28 @@ class Booking(Base, TimestampMixin):
             unique=True,
             postgresql_where=text("status IN ('driver_assigned', 'picked_up')"),
         ),
+        # Supports expire_stale_bookings, whose predicate is
+        # (status = 'pending' AND created_at < cutoff).
+        #
+        # ix_bookings_status alone already kept this off a seq scan, but it
+        # can only satisfy the status half: the plan was a bitmap scan over
+        # every pending row followed by a Filter that discarded them all.
+        # Measured on 200k rows with 5k pending and none expirable — the
+        # steady state, since the sweep normally matches nothing — that read
+        # 5006 buffers to update zero rows, and the cost grows with the
+        # number of pending bookings. With created_at in the index the
+        # predicate becomes an Index Cond and the heap is never touched:
+        # 2 buffers, 4.7ms -> 0.055ms.
+        #
+        # Partial rather than a composite on (status, created_at): pending is
+        # a small slice of a bookings table, so the index stays proportional
+        # to live work instead of to history. 104 kB versus 5176 kB for
+        # ix_bookings_status at that volume.
+        Index(
+            "ix_bookings_pending_created_at",
+            "created_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

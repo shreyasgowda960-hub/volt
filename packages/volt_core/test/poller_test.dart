@@ -27,6 +27,26 @@ void main() {
     poller.dispose();
   });
 
+  test('fetchImmediately: false skips the first tick but still arms',
+      () async {
+    var calls = 0;
+    final poller = Poller(interval: tick, onTick: () async {
+      calls++;
+    });
+
+    poller.start(fetchImmediately: false);
+    await Future<void>.delayed(Duration.zero);
+    // The owner already has the data — a Riverpod notifier fetched it in
+    // build() — so an immediate tick here is a duplicate request, which is
+    // what showed up in the log as two identical GETs ~90ms apart.
+    expect(calls, 0);
+    expect(poller.hasArmedTimer, isTrue);
+
+    await Future<void>.delayed(tick * 3);
+    expect(calls, greaterThan(0), reason: 'the interval must still fire');
+    poller.dispose();
+  });
+
   test('keeps ticking on the interval', () async {
     var calls = 0;
     final poller = Poller(interval: tick, onTick: () async {
