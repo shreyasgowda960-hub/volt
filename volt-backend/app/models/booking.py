@@ -1,11 +1,15 @@
 import enum
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, String, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.models.mixins import TimestampMixin
+
+if TYPE_CHECKING:
+    from app.models.driver import Driver
 
 
 class BookingStatus(str, enum.Enum):
@@ -67,6 +71,22 @@ class Booking(Base, TimestampMixin):
     driver_id: Mapped[int | None] = mapped_column(
         ForeignKey("drivers.id"), nullable=True, index=True
     )
+
+    # lazy="raise" is deliberate, and it is the whole reason this relationship
+    # is safe to add. On an async session, touching an unloaded relationship
+    # cannot emit its SELECT — there is no await to hang it on — so it fails
+    # with MissingGreenlet from deep inside attribute access, usually in a
+    # response serialiser, where the traceback says nothing about the missing
+    # eager load. "raise" turns that into an explicit, immediate error naming
+    # this attribute, at the line that forgot to load it.
+    #
+    # Every read path that needs it must therefore ask for it:
+    # selectinload(Booking.driver). On the list endpoint that is also what
+    # keeps it to one extra query instead of one per booking.
+    #
+    # No reverse Driver.bookings: nothing traverses that direction, and each
+    # lazy="raise" relationship is one more thing that can fail at runtime.
+    driver: Mapped["Driver | None"] = relationship(lazy="raise")
 
     vehicle_type_code: Mapped[str] = mapped_column(
         ForeignKey("vehicle_types.code"), nullable=False

@@ -3,6 +3,7 @@ from datetime import timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.booking import Booking, BookingStatus, CancelledBy
 from app.models.driver import Driver
@@ -89,11 +90,35 @@ async def get_booking_by_code(
     return result.scalar_one_or_none()
 
 
+async def get_booking_with_driver(
+    db: AsyncSession, public_code: str
+) -> Booking | None:
+    """Same as get_booking_by_code, but with the driver eagerly loaded.
+
+    Deliberately a separate function rather than an option on
+    get_booking_by_code: that one is also the first step of claim_booking,
+    mark_picked_up, mark_delivered and cancel_booking, none of which touch
+    booking.driver. Loading it there would add a query to every driver
+    action to serve a field only the customer endpoints return.
+    """
+    result = await db.execute(
+        select(Booking)
+        .options(selectinload(Booking.driver))
+        .where(Booking.public_code == public_code)
+    )
+    return result.scalar_one_or_none()
+
+
 async def list_bookings_for_user(
     db: AsyncSession, customer_id: int, limit: int
 ) -> list[Booking]:
+    # selectinload, not a join or lazy access: Booking.driver is lazy="raise",
+    # so serialising this list without it raises. It also keeps the cost at
+    # one extra query for the whole page — a lazy relationship here would be
+    # the textbook N+1, one SELECT per booking returned.
     result = await db.execute(
         select(Booking)
+        .options(selectinload(Booking.driver))
         .where(Booking.customer_id == customer_id)
         .order_by(Booking.created_at.desc())
         .limit(limit)

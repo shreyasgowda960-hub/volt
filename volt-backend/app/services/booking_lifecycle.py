@@ -33,6 +33,14 @@ _TIMESTAMP_COLUMN: dict[BookingStatus, str] = {
 }
 
 
+# Derived, not hand-listed: a terminal status is exactly one with nowhere
+# left to go. Adding a status to _LEGAL_TRANSITIONS keeps this correct for
+# free, where a second hardcoded list would quietly drift out of step.
+TERMINAL_STATUSES: frozenset[BookingStatus] = frozenset(
+    status for status, next_statuses in _LEGAL_TRANSITIONS.items() if not next_statuses
+)
+
+
 def can_transition(from_status: BookingStatus, to_status: BookingStatus) -> bool:
     return to_status in _LEGAL_TRANSITIONS.get(from_status, set())
 

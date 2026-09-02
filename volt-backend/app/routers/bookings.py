@@ -8,6 +8,7 @@ from app.models.driver import Driver
 from app.models.user import User
 from app.schemas.booking import (
     BookingCreate,
+    BookingDetailResponse,
     BookingResponse,
     CancelRequest,
     EstimateRequest,
@@ -71,30 +72,37 @@ async def create_booking(
     return BookingResponse.model_validate(created)
 
 
-@router.get("", response_model=list[BookingResponse])
+# The two customer read endpoints below are the only routes returning
+# BookingDetailResponse. The driver-facing ones (/drivers/jobs,
+# /drivers/bookings, and accept/pickup/deliver) deliberately stay on the
+# narrower BookingResponse — a driver has no business receiving the
+# customer-facing view of a booking.
+@router.get("", response_model=list[BookingDetailResponse])
 async def list_bookings(
     limit: int = Query(default=20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[BookingResponse]:
+) -> list[BookingDetailResponse]:
     await booking_service.expire_stale_bookings(db)
+    # list_bookings_for_user eager-loads the driver; without that,
+    # serialising `driver` below raises on the lazy="raise" relationship.
     bookings = await booking_service.list_bookings_for_user(db, user.id, limit)
-    return [BookingResponse.model_validate(b) for b in bookings]
+    return [BookingDetailResponse.model_validate(b) for b in bookings]
 
 
-@router.get("/{public_code}", response_model=BookingResponse)
+@router.get("/{public_code}", response_model=BookingDetailResponse)
 async def get_booking(
     public_code: str,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> BookingResponse:
+) -> BookingDetailResponse:
     await booking_service.expire_stale_bookings(db)
-    found = await booking_service.get_booking_by_code(db, public_code)
+    found = await booking_service.get_booking_with_driver(db, public_code)
     if found is None or found.customer_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Booking not found"
         )
-    return BookingResponse.model_validate(found)
+    return BookingDetailResponse.model_validate(found)
 
 
 @router.post("/{public_code}/accept", response_model=BookingResponse)
