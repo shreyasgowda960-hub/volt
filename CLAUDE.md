@@ -81,16 +81,18 @@ Monorepo. Surfaces live in:
 volt/
   CLAUDE.md
   .gitignore
-  customer_app/        # Flutter — building this first
-  driver_app/          # Flutter — later
+  customer_app/        # Flutter — built
+  driver_app/          # Flutter — built
+  packages/volt_core/  # Dart — shared config, network, theme, auth
   admin-dashboard/     # React + TS — later
-  volt-backend/        # FastAPI — later
+  volt-backend/        # FastAPI — built, deployed
 ```
 Flutter folders use underscores because Dart package names cannot contain hyphens.
 
 
 ## Current state — keep this updated
-Phase 1, customer app. Working on device (RMX3371, Android 14).
+Phase 2 done. Customer app and driver app both working on device (RMX3371,
+Android 14). Next up is spec 011 (status polling), then phase 3.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -105,10 +107,12 @@ bookings from POST /bookings. LocalFareEstimator is display-only fallback;
 the server is authoritative on price. Base URL injected via
 --dart-define=API_BASE_URL. Cleartext HTTP allowed in debug source set only.
 Run on device: flutter run -d RMX3371 --dart-define=API_BASE_URL=http://<lan-ip>:8000
-Server must run with --host 0.0.0.0 for the phone to reach it.
-Booking status screen shows the real, persisted status (currently always
-`pending` — no driver app exists yet) with a manual refresh button. No
-polling — that's spec 007.
+Server must run with --host 0.0.0.0 for the phone to reach it. Both apps now
+carry the same pair of run scripts — run-prod.ps1 (deployed backend) and
+run-local.ps1 (LAN IP, local server) — in customer_app/ and driver_app/.
+Booking status screen shows the real, persisted status with a manual refresh
+button, and statuses now advance for real because the driver app drives them.
+No polling yet — that's spec 011.
 
 Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
 Health endpoint at /api/v1/health confirms DB connectivity.
@@ -135,6 +139,9 @@ get_current_user is the only source of caller identity. Bookings enforce
 ownership and return 404 (not 403) for another user's booking.
 POST /bookings/estimate stays public by design.
 Service account key at volt-backend/secrets/ — gitignored, never commit.
+Both apps' google-services.json IS tracked, deliberately: client identifiers,
+not secrets — they ship inside every compiled APK, and ignoring the file
+breaks a fresh clone's build. Don't re-add an ignore rule for it.
 
 Deployed: backend live at https://volt-api-951s.onrender.com (Render free
 plan). Pushing to main auto-deploys to production, ~2 min. Render's free
@@ -142,8 +149,8 @@ Postgres expires ~30 days after creation (created 2026-08-08) — check the
 Render dashboard for the exact date. When it expires, schema and seed data
 rebuild fine from migrations, but all bookings and users are lost.
 
-Driver endpoints (spec 008, on branch feat/driver-endpoints — not yet merged
-to main): drivers/{register,me,me/availability,jobs,bookings} and
+Driver endpoints (spec 008, merged to main and live in production):
+drivers/{register,me,me/availability,jobs,bookings} and
 bookings/{code}/{accept,pickup,deliver,cancel}. Driver identity is a second
 Firebase principal (get_current_driver, app/driver_auth.py) — same token,
 separate drivers.firebase_uid, no auto-create on first sight (must register).
@@ -169,12 +176,15 @@ SERIALIZABLE this would raise a serialization error instead and need retry
 handling — don't raise the isolation level without adding that.
 
 Expiry is lazy: expire_stale_bookings() runs at the top of GET /jobs, GET
-/bookings/{code}, and GET /bookings, not on a schedule. A pending booking can
-sit stale past 5 minutes indefinitely if nothing calls the API in the
-meantime — known, accepted limitation until there's real traffic to justify a
-scheduled job. claim_booking distinguishes losing to another driver
-(BookingAlreadyClaimed) from losing to this sweep (BookingExpired) so a
-driver is never told "someone else took it" when nobody did.
+/bookings/{code}, and GET /bookings, not on a schedule. The effective window
+is "5 minutes plus however long until the next request," not 5 minutes.
+Confirmed in real data: three bookings created minutes apart all came back
+with the same expired_at, because nothing hit the API in between and one
+sweep caught all three. Known debt — replace with a scheduled job once
+there's real traffic to justify it. claim_booking distinguishes losing to
+another driver (BookingAlreadyClaimed) from losing to this sweep
+(BookingExpired) so a driver is never told "someone else took it" when
+nobody did.
 
 Going offline is blocked (409) while a driver holds a driver_assigned or
 picked_up booking — going dark mid-job would strand a customer.
@@ -190,20 +200,30 @@ booking" before either commits). claim_booking does the pre-check for a
 friendly message, then catches the IntegrityError the index raises if the
 pre-check missed the race, both mapping to DriverHasActiveBooking -> 409.
 
-Driver app (spec 010, on feat/driver-app — not yet merged to main). Package
-id in.volt.driver. End-to-end happy path verified on device against the
-local server: booking created, accepted, picked up, delivered. Because this
-branch isn't merged, GET /api/v1/vehicle-types and the driver endpoints are
-not live in production yet — the customer app in production has no driver
-counterpart to match against.
+Driver app (spec 010, complete, merged to main, deployed). Package id
+in.volt.driver. Happy path verified on device against the deployed backend:
+booking created, accepted, picked up, delivered. GET /api/v1/vehicle-types
+and every driver endpoint are live in production, so the customer app finally
+has a real counterpart to match against.
 
-Outstanding on this branch:
-- The three negative cases from spec 010 step 12 — vehicle-type filtering on
-  the job board, expiry after 6 minutes, one-active-job blocking a second
-  accept — not yet run.
-- A .gitignore regression happened and was reverted within this branch: a
-  commit briefly re-added a **/google-services.json ignore rule, which spec
-  005 had deliberately removed (client identifiers, not secrets — they ship
-  in every compiled APK, and ignoring the file breaks a fresh clone's build).
-  Fixed before merge; noted here so the mistake doesn't get repeated.
+Spec 010 negative cases, verified locally:
+- Vehicle-type filter works — a Mini-Truck booking is not shown to a Bike
+  driver.
+- Expiry works — an unclaimed booking comes back status=expired with
+  expired_at set.
+- One-active-job is not reachable from the UI by design: the job board hides
+  itself while a driver holds a job, so there is no second Accept to press.
+  The invariant is proven at the layer that actually enforces it — the
+  partial unique index, exercised by the forced-contention concurrency test.
+
+Known gaps:
+- BookingResponse carries no driver fields, so a customer whose booking is
+  driver_assigned sees only the status string — no driver name, vehicle
+  number, or phone. Fixed in spec 011 alongside polling, via a separate
+  customer-facing schema that includes driver details. Do NOT add driver
+  contact fields to the shared BookingResponse — it is the same object the
+  driver app reads.
+- Lazy expiry has no scheduled sweep (see above).
+- Release APKs are debug-signed for both apps — neither can go to the Play
+  Store until there's a real signing config.
 - Spec 011 (status polling for both apps) not started.
