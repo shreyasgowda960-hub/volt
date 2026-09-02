@@ -92,7 +92,8 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 
 ## Current state — keep this updated
 Phase 2 done. Customer app and driver app both working on device (RMX3371,
-Android 14). Next up is spec 011 (status polling), then phase 3.
+Android 14). Spec 011 (polling + driver details) built on feat/polling, not
+yet verified on device. Phase 3 next.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -110,9 +111,9 @@ Run on device: flutter run -d RMX3371 --dart-define=API_BASE_URL=http://<lan-ip>
 Server must run with --host 0.0.0.0 for the phone to reach it. Both apps now
 carry the same pair of run scripts — run-prod.ps1 (deployed backend) and
 run-local.ps1 (LAN IP, local server) — in customer_app/ and driver_app/.
-Booking status screen shows the real, persisted status with a manual refresh
-button, and statuses now advance for real because the driver app drives them.
-No polling yet — that's spec 011.
+Booking status screen polls (spec 011) — no more manual tapping to see a
+status change. The refresh buttons stayed on both apps anyway, because
+polling fails.
 
 Backend: volt-backend/ scaffolded. FastAPI + async SQLAlchemy + asyncpg.
 Health endpoint at /api/v1/health confirms DB connectivity.
@@ -216,14 +217,52 @@ Spec 010 negative cases, verified locally:
   The invariant is proven at the layer that actually enforces it — the
   partial unique index, exercised by the forced-contention concurrency test.
 
+Polling (spec 011). 5 second interval, in both apps, via Poller in
+volt_core. Interim by design — it is a stand-in for FCM push in phase 3, not
+the destination. Every watcher must be autoDispose: AsyncNotifierProvider is
+keep-alive by DEFAULT in Riverpod 3, and declared the obvious way a watcher
+outlives its screen and polls a finished booking until the app is killed.
+
+Stop conditions, which are three different things and must not be merged:
+terminal status stops permanently (Poller.stopForever, never re-armed);
+backgrounding is only a pause (re-arms on resume with an immediate fetch);
+disposal is structural. A tick is skipped, never queued, while a request is
+in flight — on a cold-started free tier one request can take 50s against a
+5s interval. That guard also means only one request is ever outstanding, so
+responses cannot arrive out of order and nothing needs a sequence counter.
+
+A failed poll must never clear the last known good state. First load fails
+-> real AsyncError with Riverpod retry (safe, it is a GET). Later poll fails
+-> booking untouched, only a failure counter moves, and the screen shows a
+"not updating" hint after three misses. This is the exact opposite of
+create-booking and accept, which are mutations and must never sit in a
+provider at all.
+
+Response schemas are per audience, not per model. Customers get
+BookingDetailResponse (driver details + lifecycle timestamps); drivers get
+the narrower BookingResponse. Do NOT add driver contact fields, or anything
+customer-facing, to BookingResponse — the driver app reads the same object.
+A test asserts the driver endpoints return exactly BookingResponse's key set.
+
+The customer sees the driver's phone; the driver never sees the customer's.
+Deliberately one-directional until masked two-way calling exists. And the
+driver's phone is nulled once the booking is terminal — delivered, cancelled
+or expired: operational data during a live trip, standing PII afterwards. On
+a cancelled-after-assignment booking the customer still sees name and
+vehicle number (who cancelled on them is their business) but not the number.
+Enforced by a model_validator on the schema, not per call site.
+
+Booking.driver is lazy="raise" on purpose. Async SQLAlchemy cannot lazy-load
+a relationship mid-attribute-access, so without it a forgotten eager load
+surfaces as MissingGreenlet inside a response serialiser, nowhere near the
+cause. Every read path must ask: selectinload(Booking.driver).
+get_booking_with_driver is separate from get_booking_by_code so the four
+driver mutation paths don't pay a query for a field they never touch.
+
 Known gaps:
-- BookingResponse carries no driver fields, so a customer whose booking is
-  driver_assigned sees only the status string — no driver name, vehicle
-  number, or phone. Fixed in spec 011 alongside polling, via a separate
-  customer-facing schema that includes driver details. Do NOT add driver
-  contact fields to the shared BookingResponse — it is the same object the
-  driver app reads.
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config.
-- Spec 011 (status polling for both apps) not started.
+- Spec 011 is built but NOT yet verified on device (step D), and not merged.
+  The check that matters most: with a delivered booking on screen, the server
+  log must show no repeating requests for that code.
