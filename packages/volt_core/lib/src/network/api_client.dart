@@ -65,6 +65,27 @@ class ApiClient {
     }
   }
 
+  Future<List<dynamic>> getList(String path) async {
+    try {
+      final response = await _dio.get<List<dynamic>>(path);
+      return response.data ?? <dynamic>[];
+    } on DioException catch (e) {
+      throw _translate(e);
+    }
+  }
+
+  Future<Map<String, dynamic>> patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final response = await _dio.patch<Map<String, dynamic>>(path, data: body);
+      return response.data ?? <String, dynamic>{};
+    } on DioException catch (e) {
+      throw _translate(e);
+    }
+  }
+
   ApiException _translate(DioException e) {
     final status = e.response?.statusCode;
 

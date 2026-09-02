@@ -12,6 +12,8 @@ class DriverRegister(BaseModel):
 class DriverResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
+    phone: str
     name: str
     vehicle_number: str
     vehicle_type_code: str
