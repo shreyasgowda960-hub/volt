@@ -30,15 +30,11 @@ def init_firebase() -> None:
     firebase_admin.initialize_app(cred)
 
 
-async def get_current_user(
-    creds: HTTPAuthorizationCredentials = Depends(_bearer),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    """Verifies the Firebase ID token and returns the matching User row,
-    creating it on first sign-in.
+async def verify_token(creds: HTTPAuthorizationCredentials) -> dict:
+    """Verifies a Firebase ID token and returns its decoded claims.
 
-    This is the only trustworthy source of caller identity. Nothing from the
-    request body is ever used to decide who the caller is.
+    Shared by get_current_user and get_current_driver (app/driver_auth.py) —
+    same token, two different principals looked up from it.
     """
     try:
         # verify_id_token is blocking (network call to fetch Google's public
@@ -53,13 +49,28 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    uid = decoded.get("uid")
-    phone = decoded.get("phone_number")
-    if not uid or not phone:
+    if not decoded.get("uid") or not decoded.get("phone_number"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token missing uid or phone_number",
         )
+
+    return decoded
+
+
+async def get_current_user(
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """Verifies the Firebase ID token and returns the matching User row,
+    creating it on first sign-in.
+
+    This is the only trustworthy source of caller identity. Nothing from the
+    request body is ever used to decide who the caller is.
+    """
+    decoded = await verify_token(creds)
+    uid = decoded["uid"]
+    phone = decoded["phone_number"]
 
     result = await db.execute(select(User).where(User.firebase_uid == uid))
     user = result.scalar_one_or_none()

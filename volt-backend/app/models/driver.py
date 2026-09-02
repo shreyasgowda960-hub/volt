@@ -16,6 +16,12 @@ class Driver(Base, TimestampMixin):
     phone: Mapped[str] = mapped_column(String(16), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
 
+    # Nullable: existing rows predate driver auth (spec 008). New rows get
+    # this set at registration, same as User.firebase_uid.
+    firebase_uid: Mapped[str | None] = mapped_column(
+        String(128), unique=True, index=True, nullable=True
+    )
+
     # e.g. 'KA 05 AB 1234'
     vehicle_number: Mapped[str] = mapped_column(String(20), nullable=False)
 

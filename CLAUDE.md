@@ -141,3 +141,51 @@ plan). Pushing to main auto-deploys to production, ~2 min. Render's free
 Postgres expires ~30 days after creation (created 2026-08-08) — check the
 Render dashboard for the exact date. When it expires, schema and seed data
 rebuild fine from migrations, but all bookings and users are lost.
+
+Driver endpoints (spec 008, on branch feat/driver-endpoints — not yet merged
+to main): drivers/{register,me,me/availability,jobs,bookings} and
+bookings/{code}/{accept,pickup,deliver,cancel}. Driver identity is a second
+Firebase principal (get_current_driver, app/driver_auth.py) — same token,
+separate drivers.firebase_uid, no auto-create on first sight (must register).
+
+Matching: job board. All online drivers with a matching vehicle_type_code see
+every unclaimed pending booking; first to accept wins. No dispatch, no
+per-driver assignment.
+
+State machine (app/services/booking_lifecycle.py): pending -> driver_assigned
+-> picked_up -> delivered, plus cancelled/expired off pending or
+driver_assigned. picked_up cannot be cancelled (support problem, not
+self-service). IllegalTransition and BookingAlreadyClaimed both map to 409 —
+same status code, different meaning: one is "that move isn't legal from here",
+the other is "you lost a race for this specific one."
+
+Atomic claim (claim_booking in app/services/booking.py): the pending/unclaimed
+check lives only in the UPDATE's WHERE clause, never in a prior SELECT —
+that's what makes two simultaneous Accepts resolve to exactly one winner
+without app-level locking. Depends on READ COMMITTED (Postgres's default):
+the loser's UPDATE blocks on the winner's row lock, then re-evaluates WHERE
+against the committed row and matches nothing. Under REPEATABLE READ or
+SERIALIZABLE this would raise a serialization error instead and need retry
+handling — don't raise the isolation level without adding that.
+
+Expiry is lazy: expire_stale_bookings() runs at the top of GET /jobs, GET
+/bookings/{code}, and GET /bookings, not on a schedule. A pending booking can
+sit stale past 5 minutes indefinitely if nothing calls the API in the
+meantime — known, accepted limitation until there's real traffic to justify a
+scheduled job. claim_booking distinguishes losing to another driver
+(BookingAlreadyClaimed) from losing to this sweep (BookingExpired) so a
+driver is never told "someone else took it" when nobody did.
+
+Going offline is blocked (409) while a driver holds a driver_assigned or
+picked_up booking — going dark mid-job would strand a customer.
+
+Double-accept is now closed (follow-up to spec 008, still on
+feat/driver-endpoints). A driver can hold at most one driver_assigned/
+picked_up booking, enforced by a partial unique index —
+one_active_booking_per_driver on bookings(driver_id) WHERE status IN
+(driver_assigned, picked_up) — the same reasoning as the atomic claim above:
+a SELECT-based pre-check alone has the identical race (two simultaneous
+accepts by the same driver, on different bookings, can both read "no active
+booking" before either commits). claim_booking does the pre-check for a
+friendly message, then catches the IntegrityError the index raises if the
+pre-check missed the race, both mapping to DriverHasActiveBooking -> 409.

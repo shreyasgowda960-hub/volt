@@ -63,6 +63,10 @@ class BookingResponse(BaseModel):
     created_at: datetime
 
 
+class CancelRequest(BaseModel):
+    cancellation_reason: str | None = Field(default=None, max_length=255)
+
+
 class ErrorResponse(BaseModel):
     """One consistent error shape across every endpoint."""
 

@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Numeric, String
+from sqlalchemy import DateTime, Enum, Float, ForeignKey, Index, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -34,6 +34,21 @@ class PaymentMethod(str, enum.Enum):
 
 class Booking(Base, TimestampMixin):
     __tablename__ = "bookings"
+
+    # The real fix for double-accept (spec 008 follow-up): a driver can only
+    # have one row in driver_assigned/picked_up at a time. This is the
+    # authoritative check — a prior SELECT-then-check has the exact same race
+    # the original claim_booking spec was written to close. claim_booking
+    # does a cheap pre-check for a friendly message, but this index is what
+    # actually prevents it under concurrent accepts.
+    __table_args__ = (
+        Index(
+            "one_active_booking_per_driver",
+            "driver_id",
+            unique=True,
+            postgresql_where=text("status IN ('driver_assigned', 'picked_up')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
