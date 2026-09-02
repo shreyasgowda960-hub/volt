@@ -179,8 +179,8 @@ driver is never told "someone else took it" when nobody did.
 Going offline is blocked (409) while a driver holds a driver_assigned or
 picked_up booking — going dark mid-job would strand a customer.
 
-Double-accept is now closed (follow-up to spec 008, still on
-feat/driver-endpoints). A driver can hold at most one driver_assigned/
+Double-accept is now closed (follow-up to spec 008, merged to main). A
+driver can hold at most one driver_assigned/
 picked_up booking, enforced by a partial unique index —
 one_active_booking_per_driver on bookings(driver_id) WHERE status IN
 (driver_assigned, picked_up) — the same reasoning as the atomic claim above:
@@ -189,3 +189,21 @@ accepts by the same driver, on different bookings, can both read "no active
 booking" before either commits). claim_booking does the pre-check for a
 friendly message, then catches the IntegrityError the index raises if the
 pre-check missed the race, both mapping to DriverHasActiveBooking -> 409.
+
+Driver app (spec 010, on feat/driver-app — not yet merged to main). Package
+id in.volt.driver. End-to-end happy path verified on device against the
+local server: booking created, accepted, picked up, delivered. Because this
+branch isn't merged, GET /api/v1/vehicle-types and the driver endpoints are
+not live in production yet — the customer app in production has no driver
+counterpart to match against.
+
+Outstanding on this branch:
+- The three negative cases from spec 010 step 12 — vehicle-type filtering on
+  the job board, expiry after 6 minutes, one-active-job blocking a second
+  accept — not yet run.
+- A .gitignore regression happened and was reverted within this branch: a
+  commit briefly re-added a **/google-services.json ignore rule, which spec
+  005 had deliberately removed (client identifiers, not secrets — they ship
+  in every compiled APK, and ignoring the file breaks a fresh clone's build).
+  Fixed before merge; noted here so the mistake doesn't get repeated.
+- Spec 011 (status polling for both apps) not started.
