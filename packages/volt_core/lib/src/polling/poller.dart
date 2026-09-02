@@ -54,6 +54,18 @@ class Poller {
   /// re-arming something that is finished.
   bool get isStopped => _stopped;
 
+  /// Whether a tick timer is currently armed.
+  ///
+  /// Exposed for tests, because "callbacks stopped" and "the timer is
+  /// actually cancelled" are two different things and only the first is
+  /// observable from outside. [_tick] checks `_stopped` and `_disposed`
+  /// itself, so a stopped-but-uncancelled periodic timer keeps firing every
+  /// interval — doing nothing, but keeping this object and its closure
+  /// reachable for the life of the app. That leak is the whole reason this
+  /// class exists, and without this getter no test could catch it.
+  @visibleForTesting
+  bool get hasArmedTimer => _timer?.isActive ?? false;
+
   /// Runs [onTick] immediately, then every `interval` after that, and starts
   /// watching the app lifecycle.
   ///

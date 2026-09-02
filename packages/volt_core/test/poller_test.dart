@@ -105,10 +105,18 @@ void main() {
 
     expect(poller.isStopped, isTrue);
     expect(calls, callsAtStop);
+    // The timer assertions are the load-bearing half. Without them this test
+    // passes even if start() happily re-arms after stopForever, because
+    // _tick's own _stopped check would make every one of those ticks a no-op
+    // — leaving a periodic timer firing forever for no reason. Verified: it
+    // did pass under exactly that mutation before these two lines existed.
+    expect(poller.hasArmedTimer, isFalse,
+        reason: 'stopForever must cancel the timer, not just gate callbacks');
     poller.dispose();
+    expect(poller.hasArmedTimer, isFalse);
   });
 
-  test('nothing is called after dispose', () async {
+  test('dispose cancels the timer, not just the callbacks', () async {
     var calls = 0;
     final poller = Poller(interval: tick, onTick: () async {
       calls++;
@@ -116,11 +124,19 @@ void main() {
 
     poller.start();
     await Future<void>.delayed(tick * 3);
+    expect(poller.hasArmedTimer, isTrue, reason: 'sanity: it was armed');
+
     poller.dispose();
     final callsAtDispose = calls;
 
-    await Future<void>.delayed(tick * 5);
+    // Same blind spot as above: checking only that calls stop would pass even
+    // with the cancel removed from dispose(), since _disposed short-circuits
+    // _tick. An uncancelled timer is the spec 007 leak — inert, invisible,
+    // and alive for as long as the process is.
+    expect(poller.hasArmedTimer, isFalse,
+        reason: 'dispose must cancel the timer, not just gate callbacks');
 
+    await Future<void>.delayed(tick * 5);
     expect(calls, callsAtDispose);
   });
 
