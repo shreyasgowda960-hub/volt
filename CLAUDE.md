@@ -97,6 +97,8 @@ Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
 FakeAuthRepository kept behind the same interface for tests/offline work,
 not wired up by default.
 Package id: in.volt.customer (Android/iOS/macOS/Linux, renamed 2026-08-05).
+Release APKs are debug-signed — cannot go to the Play Store as-is; needs a
+real signing config first.
 
 App talks to the API (spec 006). Fares come from POST /bookings/estimate,
 bookings from POST /bookings. LocalFareEstimator is display-only fallback;
@@ -120,8 +122,12 @@ changes never rewrite past bookings. Status derived from per-transition
 timestamps; cancelled and expired distinct.
 
 API: POST /api/v1/bookings/estimate, POST /api/v1/bookings,
-GET /api/v1/bookings/{public_code}. Fare is computed server-side from the
-vehicle_types table and snapshotted onto each booking.
+GET /api/v1/bookings/{public_code}, GET /api/v1/bookings (caller's own
+bookings, newest first, limit param 1-100, default 20). Fare is computed
+server-side from the vehicle_types table and snapshotted onto each booking.
+Vehicle capacity is enforced server-side in create_booking (422 if
+approx_weight_kg exceeds the vehicle type's capacity_kg) and filtered out of
+/estimate's options (approx_weight_kg is an optional field there).
 
 Auth: Firebase phone OTP end to end. Client uses FirebaseAuthRepository behind
 the AuthRepository interface. Server verifies ID tokens via firebase-admin;
@@ -129,3 +135,9 @@ get_current_user is the only source of caller identity. Bookings enforce
 ownership and return 404 (not 403) for another user's booking.
 POST /bookings/estimate stays public by design.
 Service account key at volt-backend/secrets/ — gitignored, never commit.
+
+Deployed: backend live at https://volt-api-951s.onrender.com (Render free
+plan). Pushing to main auto-deploys to production, ~2 min. Render's free
+Postgres expires ~30 days after creation (created 2026-08-08) — check the
+Render dashboard for the exact date. When it expires, schema and seed data
+rebuild fine from migrations, but all bookings and users are lost.
