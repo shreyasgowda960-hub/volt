@@ -40,6 +40,7 @@ dependencies:
   dio: ^5.11.0
   volt_core:
     path: ../packages/volt_core
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

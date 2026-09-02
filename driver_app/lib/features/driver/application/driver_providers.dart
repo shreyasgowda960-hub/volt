@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:volt_core/volt_core.dart';
 
-import '../../jobs/domain/job.dart';
 import '../data/driver_repository.dart';
 import '../domain/driver_profile.dart';
 import '../domain/vehicle_type_option.dart';
@@ -31,19 +30,8 @@ final driverProfileProvider = FutureProvider<DriverProfile?>((ref) async {
   }
 });
 
-final availableJobsProvider = FutureProvider<List<Job>>((ref) async {
-  return ref.watch(driverRepositoryProvider).availableJobs();
-});
-
-/// The one job this driver currently holds in driver_assigned or picked_up,
-/// or null. Mirrors the server's one-active-booking-per-driver invariant —
-/// see the CLAUDE.md note on why the job board is hidden when this is set.
-final activeJobProvider = FutureProvider<Job?>((ref) async {
-  final jobs = await ref.watch(driverRepositoryProvider).myJobs();
-  for (final job in jobs) {
-    if (job.status == JobStatus.driverAssigned || job.status == JobStatus.pickedUp) {
-      return job;
-    }
-  }
-  return null;
-});
+// availableJobsProvider and activeJobProvider lived here until spec 011.
+// Both are now polling notifiers in
+// features/jobs/application/job_watchers.dart — jobBoardWatcherProvider and
+// activeJobWatcherProvider — because a one-shot fetch cannot notice a job
+// appearing on the board, or a customer cancelling while the driver drives.

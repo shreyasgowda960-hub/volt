@@ -4,7 +4,6 @@ import 'package:volt_core/volt_core.dart';
 import '../data/booking_repository.dart';
 import '../data/fare_estimator.dart';
 import '../data/remote_fare_estimator.dart';
-import '../domain/booking.dart';
 import '../domain/fare_estimate.dart';
 import '../domain/location.dart';
 import '../domain/vehicle_type.dart';
@@ -76,7 +75,9 @@ final fareEstimatesProvider = FutureProvider.family<List<FareEstimate>, double>(
       ProviderContainer.defaultRetry(retryCount, error, maxRetries: 2),
 );
 
-final bookingByCodeProvider =
-    FutureProvider.family<Booking, String>((ref, publicCode) async {
-  return ref.watch(bookingRepositoryProvider).byPublicCode(publicCode);
-});
+// bookingByCodeProvider lived here until spec 011. Replaced by
+// bookingWatcherProvider in booking_watcher.dart — a one-shot fetch behind a
+// manual refresh button was the whole thing this spec set out to remove.
+// Deleted rather than kept alongside: two ways to read the same booking, one
+// of which silently never updates, is a trap for whoever wires up the next
+// screen.

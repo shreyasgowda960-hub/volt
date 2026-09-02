@@ -14,6 +14,12 @@ abstract interface class BookingRepository {
   });
 
   Future<Booking> byPublicCode(String publicCode);
+
+  /// Free before pickup — a phase 1 decision, so there is no fee messaging.
+  /// The server rejects it with 409 once the booking is picked_up or later,
+  /// which is why the UI hides the button rather than relying on this call
+  /// to fail politely.
+  Future<Booking> cancel(String publicCode, {String? reason});
 }
 
 class RemoteBookingRepository implements BookingRepository {
@@ -43,6 +49,15 @@ class RemoteBookingRepository implements BookingRepository {
   @override
   Future<Booking> byPublicCode(String publicCode) async {
     final json = await _api.get('/api/v1/bookings/$publicCode');
+    return Booking.fromJson(json);
+  }
+
+  @override
+  Future<Booking> cancel(String publicCode, {String? reason}) async {
+    final json = await _api.post(
+      '/api/v1/bookings/$publicCode/cancel',
+      {'cancellation_reason': ?reason},
+    );
     return Booking.fromJson(json);
   }
 

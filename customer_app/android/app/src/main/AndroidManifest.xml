@@ -41,5 +41,15 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- url_launcher needs this to see the dialler. Without it
+             canLaunchUrl('tel:...') returns false on Android 11 (API 30) and
+             above, and the Call button on the booking status screen silently
+             does nothing. Added inside the existing <queries> element on
+             purpose — the manifest takes one, as a direct child of <manifest>.
+             Form taken from url_launcher 6.3.2's README, not from memory. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="tel"/>
+        </intent>
     </queries>
 </manifest>

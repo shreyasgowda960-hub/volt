@@ -1,4 +1,16 @@
-enum JobStatus { pending, driverAssigned, pickedUp, delivered, cancelled, expired }
+enum JobStatus {
+  pending,
+  driverAssigned,
+  pickedUp,
+  delivered,
+  cancelled,
+  expired;
+
+  /// This driver is on the hook for it: mirrors the server's
+  /// one_active_booking_per_driver index, which counts exactly these two.
+  bool get isActive =>
+      this == JobStatus.driverAssigned || this == JobStatus.pickedUp;
+}
 
 JobStatus _statusFromJson(String raw) {
   switch (raw) {

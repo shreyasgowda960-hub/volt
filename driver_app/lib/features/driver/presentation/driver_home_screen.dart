@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:volt_core/volt_core.dart';
 
+import '../../jobs/application/job_watchers.dart';
 import '../../jobs/domain/job.dart';
 import '../../jobs/presentation/active_job_screen.dart';
 import '../application/driver_providers.dart';
@@ -24,8 +25,8 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     try {
       await ref.read(driverRepositoryProvider).setOnline(online);
       ref.invalidate(driverProfileProvider);
-      ref.invalidate(activeJobProvider);
-      if (online) ref.invalidate(availableJobsProvider);
+      ref.invalidate(activeJobWatcherProvider);
+      if (online) ref.invalidate(jobBoardWatcherProvider);
     } on ApiException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -42,24 +43,28 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       final accepted = await ref.read(driverRepositoryProvider).accept(job.publicCode);
       if (!mounted) return;
       setState(() => _acceptingCode = null);
+      // Hand the just-claimed job straight to the watcher rather than making
+      // it refetch: accept already returned the authoritative row, and this
+      // is also what starts it polling for a customer cancellation.
+      ref.read(activeJobWatcherProvider.notifier).applyLocalUpdate(accepted);
       await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => ActiveJobScreen(job: accepted)),
+        MaterialPageRoute(builder: (_) => const ActiveJobScreen()),
       );
       // Back from delivering (or from an early pop) — either way the active
       // job may have changed, so refresh both.
-      ref.invalidate(activeJobProvider);
-      ref.invalidate(availableJobsProvider);
+      ref.invalidate(activeJobWatcherProvider);
+      ref.invalidate(jobBoardWatcherProvider);
     } on JobAlreadyClaimed {
       if (!mounted) return;
       setState(() => _acceptingCode = null);
-      ref.invalidate(availableJobsProvider);
+      ref.invalidate(jobBoardWatcherProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Another driver took that job')),
       );
     } on JobExpired {
       if (!mounted) return;
       setState(() => _acceptingCode = null);
-      ref.invalidate(availableJobsProvider);
+      ref.invalidate(jobBoardWatcherProvider);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('That booking expired')),
       );
@@ -114,7 +119,7 @@ class _HomeBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final activeJobAsync = ref.watch(activeJobProvider);
+    final activeJobAsync = ref.watch(activeJobWatcherProvider);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -152,7 +157,11 @@ class _HomeBody extends ConsumerWidget {
                       style: const TextStyle(color: AppColors.textSecondary),
                     ),
                   ),
-                  data: (activeJob) => activeJob != null
+                  // isActive, not a null check: the watcher keeps publishing
+                  // a job after it turns cancelled or delivered so the active
+                  // job screen can explain what happened. A terminal job is
+                  // not "in progress", so the board comes back here.
+                  data: (activeJob) => activeJob != null && activeJob.status.isActive
                       ? _ActiveJobBanner(job: activeJob)
                       : _JobBoard(acceptingCode: acceptingCode, onAccept: onAccept),
                 ),
@@ -202,7 +211,7 @@ class _ActiveJobBanner extends StatelessWidget {
             const SizedBox(height: 16),
             FilledButton(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => ActiveJobScreen(job: job)),
+                MaterialPageRoute(builder: (_) => const ActiveJobScreen()),
               ),
               child: const Text('View job'),
             ),
@@ -221,18 +230,21 @@ class _JobBoard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final jobsAsync = ref.watch(availableJobsProvider);
+    final jobsAsync = ref.watch(jobBoardWatcherProvider);
 
     return RefreshIndicator(
-      onRefresh: () => ref.refresh(availableJobsProvider.future),
+      // Pull-to-refresh stays even though the board polls itself: a driver
+      // waiting on work will pull anyway, and it must do something.
+      onRefresh: () =>
+          ref.read(jobBoardWatcherProvider.notifier).refreshNow(),
       child: jobsAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (error, _) => _ErrorState(
           message: error is ApiException ? error.message : 'Something went wrong.',
-          onRetry: () => ref.invalidate(availableJobsProvider),
+          onRetry: () => ref.invalidate(jobBoardWatcherProvider),
         ),
         data: (jobs) => jobs.isEmpty
-            ? _EmptyState(onRefresh: () => ref.invalidate(availableJobsProvider))
+            ? _EmptyState(onRefresh: () => ref.invalidate(jobBoardWatcherProvider))
             : ListView.separated(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(24),
