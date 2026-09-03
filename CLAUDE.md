@@ -480,7 +480,20 @@ Spec 012 — real addresses:
 Known gaps:
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
-  Store until there's a real signing config.
+  Store until there's a real signing config. This is spec 013 Part B, and it
+  is DEFERRED on purpose rather than pending:
+  * The upload key is permanent in effect. Android only installs updates
+    signed by the same key, so it wants creating when there is a real upload
+    to verify against and the whole flow — keystore, Play App Signing, and
+    the third fingerprint Google's own app-signing key adds — can be done and
+    checked in one sitting. Generating it months early means a key and a
+    password to look after with nothing depending on them yet.
+  * Nothing is blocked meanwhile. Sideloaded debug-signed APKs install and
+    run fine, which is the only distribution happening today.
+  * Half-doing it is worse than not starting. A release build signed with a
+    new upload key has a DIFFERENT SHA-1, and Firebase phone auth silently
+    fails until that fingerprint is added — so set up and left untested it
+    would look finished and break precisely when it mattered.
 - No rate limiting anywhere (see above). The Google-side per-API quota cap
   is currently the only thing bounding spend if a client misbehaves.
 - Reverse geocode is uncached by necessity, so a customer who drags the map
