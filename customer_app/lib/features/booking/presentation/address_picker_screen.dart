@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:volt_core/volt_core.dart';
 
@@ -64,7 +65,15 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
   List<PlaceSuggestion> _suggestions = [];
   bool _searching = false;
   bool _resolving = false;
-  String? _error;
+
+  /// The current problem, if any, and what the customer can do about it.
+  ///
+  /// One field rather than a message plus separate action fields: the action
+  /// belongs to the message, and keeping them apart is how you end up
+  /// offering "Open settings" next to a network error.
+  _Problem? _problem;
+
+  bool _locating = false;
 
   /// Set when the chosen or pinned location is outside the service area.
   /// Shown inline rather than returned, so the server never has to refuse it.
@@ -90,6 +99,17 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
     // first camera idle finds an address it already has and skips a
     // pointless reverse geocode.
     _pinnedPlace = widget.initial;
+
+    // Opening in search mode with something already selected showed an empty
+    // field and hid the seeded pin entirely — the customer could not see
+    // what was currently chosen, which is the one thing reopening the picker
+    // is for. With a selection, start on the map showing it; without one,
+    // start in search, because there is nothing to look at and typing is the
+    // only way forward.
+    if (widget.initial != null) {
+      _mode = _Mode.map;
+      _mapEverOpened = true;
+    }
   }
 
   @override
@@ -110,7 +130,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
     final query = raw.trim();
 
     setState(() {
-      _error = null;
+      _problem = null;
     });
 
     if (query.length < _minChars) {
@@ -143,7 +163,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.message;
+        _problem = _Problem(e.message);
         _searching = false;
       });
     }
@@ -153,7 +173,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
     if (_resolving) return;
     setState(() {
       _resolving = true;
-      _error = null;
+      _problem = null;
       _rejection = null;
     });
 
@@ -183,7 +203,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
       }
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() => _problem = _Problem(e.message));
     } finally {
       if (mounted) setState(() => _resolving = false);
     }
@@ -235,7 +255,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
 
     setState(() {
       _geocoding = true;
-      _error = null;
+      _problem = null;
       _rejection = null;
       _pinnedPlace = null;
     });
@@ -248,10 +268,11 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
       _setPinned(place);
     } on NoAddressAtPoint {
       if (!mounted) return;
-      setState(() => _error = 'No address here. Try moving the pin.');
+      setState(
+          () => _problem = const _Problem('No address here. Try moving the pin.'));
     } on ApiException catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.message);
+      setState(() => _problem = _Problem(e.message));
     } finally {
       if (mounted) setState(() => _geocoding = false);
     }
@@ -268,6 +289,113 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
           ? null
           : serviceAreaRejection(area, place.lat, place.lng);
     });
+  }
+
+  /// Drops the pin on the current position of the device.
+  ///
+  /// Permission is requested here, on the tap, and never on screen open. A
+  /// permission dialog that appears the instant a screen loads gets dismissed
+  /// reflexively, and on Android a reflexive deny is one tap away from
+  /// deniedForever — at which point the feature is dead until the customer
+  /// hunts it down in system settings. Asking when they have just pressed a
+  /// button labelled "use my location" makes the dialog make sense.
+  ///
+  /// Nothing here can block the picker. Every failure ends as an inline
+  /// message with search still fully working, because location is a
+  /// convenience and typing an address is the actual feature.
+  Future<void> _useCurrentLocation() async {
+    if (_locating) return;
+    setState(() {
+      _locating = true;
+      _problem = null;
+    });
+
+    try {
+      // Checked first: with location services off at the OS level, asking
+      // for permission is pointless and the position call would fail anyway.
+      // The fix is a different settings screen, so it needs its own message.
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        _fail(
+          'Location is switched off on this device.',
+          actionLabel: 'Turn on',
+          onAction: Geolocator.openLocationSettings,
+        );
+        return;
+      }
+
+      var permission = await Geolocator.checkPermission();
+      // Only ask when it can still produce a dialog. Calling
+      // requestPermission on deniedForever silently returns deniedForever
+      // again, which would look like the button doing nothing at all.
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        _fail(
+          'Location permission is turned off for VOLT. You can still search '
+          'for an address.',
+          actionLabel: 'Open settings',
+          // openAppSettings, not openLocationSettings: the problem is this
+          // app permission, not the device location switch.
+          onAction: Geolocator.openAppSettings,
+        );
+        return;
+      }
+
+      if (permission != LocationPermission.whileInUse &&
+          permission != LocationPermission.always) {
+        // Plain denial, or unableToDetermine. No action offered — the
+        // customer can simply tap the button again.
+        _fail('Location permission denied. Search for an address instead.');
+        return;
+      }
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          // Bounded, because a first GPS fix indoors can hang indefinitely
+          // and an unbounded wait leaves a spinner with no way out.
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      if (!mounted) return;
+
+      // GPS gives coordinates and no address, so this one reverse geocode is
+      // unavoidable. The pan afterwards then finds a point already resolved
+      // and skips a second one.
+      final place = await ref
+          .read(placesServiceProvider)
+          .reverseGeocode(position.latitude, position.longitude);
+      if (!mounted) return;
+
+      _dismissSuggestions();
+      _setPinned(place);
+      await _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(place.lat, place.lng), _pinZoom),
+      );
+    } on TimeoutException {
+      _fail('Could not get a location fix. Try again outdoors, or search.');
+    } on LocationServiceDisabledException {
+      // Services can be switched off between the check above and the fix.
+      _fail(
+        'Location is switched off on this device.',
+        actionLabel: 'Turn on',
+        onAction: Geolocator.openLocationSettings,
+      );
+    } on NoAddressAtPoint {
+      _fail('No address found at your location. Try searching instead.');
+    } on ApiException catch (e) {
+      _fail(e.message);
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
+
+  void _fail(String message, {String? actionLabel, VoidCallback? onAction}) {
+    if (!mounted) return;
+    setState(() => _problem =
+        _Problem(message, actionLabel: actionLabel, onAction: onAction));
   }
 
   // --- Shared -----------------------------------------------------------
@@ -295,7 +423,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
     setState(() {
       _mode = _mode == _Mode.search ? _Mode.map : _Mode.search;
       if (_mode == _Mode.map) _mapEverOpened = true;
-      _error = null;
+      _problem = null;
     });
   }
 
@@ -355,7 +483,13 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
             ),
             if (_rejection != null)
               _InlineMessage(text: _rejection!, isError: true),
-            if (_error != null) _InlineMessage(text: _error!, isError: true),
+            if (_problem != null)
+              _InlineMessage(
+                text: _problem!.message,
+                isError: true,
+                actionLabel: _problem!.actionLabel,
+                onAction: _problem!.onAction,
+              ),
             if (_searching && !showSuggestions) const _SearchingHint(),
             Expanded(
               child: Stack(
@@ -475,6 +609,25 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
                       Icon(Icons.location_on, size: 44, color: AppColors.navy),
                 ),
               ),
+              // Our own button rather than the SDK myLocationButton, which is
+              // wired to myLocationEnabled and would trigger the permission
+              // prompt on screen open.
+              Positioned(
+                right: 12,
+                bottom: 12,
+                child: FloatingActionButton.small(
+                  heroTag: 'use-current-location',
+                  tooltip: 'Use my current location',
+                  onPressed: _locating ? null : _useCurrentLocation,
+                  child: _locating
+                      ? const SizedBox(
+                          height: 18,
+                          width: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.my_location),
+                ),
+              ),
             ],
           ),
         ),
@@ -553,29 +706,61 @@ class _PinnedAddressBar extends StatelessWidget {
   }
 }
 
+/// A message and, optionally, the one thing that fixes it.
+class _Problem {
+  const _Problem(this.message, {this.actionLabel, this.onAction});
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+}
+
 class _InlineMessage extends StatelessWidget {
-  const _InlineMessage({required this.text, required this.isError});
+  const _InlineMessage({
+    required this.text,
+    required this.isError,
+    this.actionLabel,
+    this.onAction,
+  });
 
   final String text;
   final bool isError;
+  final String? actionLabel;
+  final VoidCallback? onAction;
 
   @override
   Widget build(BuildContext context) {
+    final colour = isError ? AppColors.danger : AppColors.navy;
+
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        color: (isError ? AppColors.danger : AppColors.navy)
-            .withValues(alpha: 0.08),
+        color: colour.withValues(alpha: 0.08),
       ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 13,
-          color: isError ? AppColors.danger : AppColors.navy,
-        ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(fontSize: 13, color: colour),
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: onAction,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(actionLabel!, style: TextStyle(color: colour)),
+            ),
+          ],
+        ],
       ),
     );
   }

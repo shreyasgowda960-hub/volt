@@ -1,4 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- For the "use my current location" button in the address picker. Both
+         are declared per geolocator 14.0.3's README: when both are present
+         the plugin uses FINE, but declaring COARSE too means Android 12+
+         users who pick "approximate location" still get a usable position
+         instead of a denial.
+
+         Deliberately NOT ACCESS_BACKGROUND_LOCATION: the position is read
+         once, while the customer is looking at the map and has just tapped a
+         button. Background location is a Play Store review problem and we
+         have no use for it. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <application
         android:label="customer_app"
         android:name="${applicationName}"
