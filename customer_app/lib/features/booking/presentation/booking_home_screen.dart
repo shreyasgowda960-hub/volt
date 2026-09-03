@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:volt_core/volt_core.dart';
 
 import '../application/booking_providers.dart';
-import '../data/bengaluru_locations.dart';
-import '../domain/location.dart';
+import '../domain/place.dart';
+import 'address_picker_screen.dart';
 import 'vehicle_select_screen.dart';
 
 class BookingHomeScreen extends ConsumerStatefulWidget {
@@ -23,6 +23,22 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
     _goodsController.dispose();
     _weightController.dispose();
     super.dispose();
+  }
+
+  Future<void> _pick({required bool isPickup}) async {
+    final chosen = await Navigator.of(context).push<Place>(
+      MaterialPageRoute(
+        builder: (_) => AddressPickerScreen(
+          title: isPickup ? 'Pickup location' : 'Drop location',
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    if (isPickup) {
+      ref.read(pickupLocationProvider.notifier).select(chosen);
+    } else {
+      ref.read(dropLocationProvider.notifier).select(chosen);
+    }
   }
 
   @override
@@ -70,7 +86,7 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Pick a pickup and drop point to see fares.',
+                'Search an address or drop a pin to see fares.',
                 style: TextStyle(color: AppColors.textSecondary),
               ),
               const SizedBox(height: 24),
@@ -83,18 +99,11 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<Location>(
-                isExpanded: true,
-                initialValue: pickup,
-                hint: const Text('Select pickup location'),
-                items: bengaluruLocations
-                    .map((l) => DropdownMenuItem(value: l, child: Text(l.name)))
-                    .toList(),
-                onChanged: (l) =>
-                    ref.read(pickupLocationProvider.notifier).select(l),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.trip_origin),
-                ),
+              _AddressRow(
+                icon: Icons.trip_origin,
+                hint: 'Search pickup address',
+                place: pickup,
+                onTap: () => _pick(isPickup: true),
               ),
               const SizedBox(height: 20),
               const Text(
@@ -106,18 +115,11 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                 ),
               ),
               const SizedBox(height: 8),
-              DropdownButtonFormField<Location>(
-                isExpanded: true,
-                initialValue: drop,
-                hint: const Text('Select drop location'),
-                items: bengaluruLocations
-                    .map((l) => DropdownMenuItem(value: l, child: Text(l.name)))
-                    .toList(),
-                onChanged: (l) =>
-                    ref.read(dropLocationProvider.notifier).select(l),
-                decoration: const InputDecoration(
-                  prefixIcon: Icon(Icons.location_on_outlined),
-                ),
+              _AddressRow(
+                icon: Icons.location_on_outlined,
+                hint: 'Search drop address',
+                place: drop,
+                onTap: () => _pick(isPickup: false),
               ),
               if (sameLocation) ...[
                 const SizedBox(height: 12),
@@ -180,6 +182,85 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
               const SizedBox(height: 24),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A tappable address row, replacing the dropdown of six hardcoded areas.
+///
+/// Shows the full address once chosen rather than a short label: the
+/// difference between two addresses on the same street is in the part a
+/// truncated label would cut off.
+class _AddressRow extends StatelessWidget {
+  const _AddressRow({
+    required this.icon,
+    required this.hint,
+    required this.place,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String hint;
+  final Place? place;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final chosen = place;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: chosen == null ? AppColors.border : AppColors.navy,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: AppColors.navy),
+            const SizedBox(width: 12),
+            Expanded(
+              child: chosen == null
+                  ? Text(
+                      hint,
+                      style: const TextStyle(color: AppColors.textSecondary),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          chosen.shortAddress,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          chosen.address,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              chosen == null ? '' : 'Change',
+              style: const TextStyle(
+                color: AppColors.navy,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );

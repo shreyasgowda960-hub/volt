@@ -6,7 +6,7 @@ import 'package:volt_core/volt_core.dart';
 
 import '../application/booking_providers.dart';
 import '../domain/fare_estimate.dart';
-import '../domain/location.dart';
+import '../domain/place.dart';
 import '../domain/vehicle_type.dart';
 import 'booking_status_screen.dart';
 
@@ -28,7 +28,7 @@ class VehicleSelectScreen extends ConsumerStatefulWidget {
 class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
   bool _booking = false;
 
-  Future<void> _confirm(Location pickup, Location drop, VehicleType vehicleType) async {
+  Future<void> _confirm(Place pickup, Place drop, VehicleType vehicleType) async {
     if (_booking) return;
     setState(() => _booking = true);
     try {

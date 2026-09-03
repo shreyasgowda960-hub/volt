@@ -1,13 +1,13 @@
 import 'dart:math';
 
 import '../domain/fare_estimate.dart';
-import '../domain/location.dart';
+import '../domain/place.dart';
 import '../domain/vehicle_type.dart';
 
 abstract interface class FareEstimator {
   Future<List<FareEstimate>> estimateAll(
-    Location pickup,
-    Location drop, {
+    Place pickup,
+    Place drop, {
     required double approxWeightKg,
   });
 }
@@ -20,7 +20,7 @@ class LocalFareEstimator implements FareEstimator {
   static const _roadFactor = 1.4;
   static const _avgSpeedKmh = 20.0;
 
-  double _haversineKm(Location a, Location b) {
+  double _haversineKm(Place a, Place b) {
     final dLat = _deg2rad(b.lat - a.lat);
     final dLng = _deg2rad(b.lng - a.lng);
     final h = sin(dLat / 2) * sin(dLat / 2) +
@@ -35,8 +35,8 @@ class LocalFareEstimator implements FareEstimator {
 
   @override
   Future<List<FareEstimate>> estimateAll(
-    Location pickup,
-    Location drop, {
+    Place pickup,
+    Place drop, {
     required double approxWeightKg,
   }) async {
     final distanceKm = _haversineKm(pickup, drop) * _roadFactor;

@@ -41,6 +41,7 @@ dependencies:
   volt_core:
     path: ../packages/volt_core
   url_launcher: ^6.3.2
+  google_maps_flutter: ^2.18.0
 
 dev_dependencies:
   flutter_test:

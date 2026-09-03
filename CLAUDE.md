@@ -299,6 +299,69 @@ cause. Every read path must ask: selectinload(Booking.driver).
 get_booking_with_driver is separate from get_booking_by_code so the four
 driver mutation paths don't pay a query for a field they never touch.
 
+Real addresses (spec 012, built on feat/real-addresses, NOT yet verified on
+device). The six hardcoded Bengaluru locations are gone; pickup and drop come
+from Places autocomplete or a dropped pin.
+
+Service area is env-driven on purpose: SERVICE_CENTER_LAT/LNG and
+SERVICE_RADIUS_KM, exposed by public GET /api/v1/service-area. The radius can
+be narrowed for a field test from the Render dashboard with no deploy and no
+app rebuild, because both apps read it rather than hardcoding it. Enforced in
+create_booking (not the route) so no future route can skip it; /estimate
+checks in the route because estimate_all owns coordinates, not the request.
+Straight-line distance, never road distance — the area asks "how far from
+centre", not "how far to drive", so it must not move when ROAD_FACTOR does.
+Boundary is inclusive.
+
+Google is called ONLY from the backend, via authenticated POST endpoints at
+/api/v1/places/{autocomplete,details,reverse-geocode}. This is not a
+preference: an Android application restriction does not apply to the Places
+or Geocoding web services (verified — Google answers REQUEST_DENIED "not
+authorized... with empty referer"), so a client-side key would have to be
+unrestricted and would ship extractable inside every APK. GOOGLE_MAPS_API_KEY
+is server-side, application restriction NONE, API-restricted to Places API
+(New) + Geocoding, with per-API quota caps as the thing that actually bounds
+damage. Missing key gives 503, not a crash.
+
+The separate Android key stays in customer_app's AndroidManifest for the map
+widget only — Maps SDK for Android is what Android restrictions are for. It
+is the same value already in google-services.json, so committing it adds no
+exposure.
+
+Authenticated, unlike POST /bookings/estimate which is public. The split is
+who pays: price discovery costs a haversine, these cost money per call with
+Google, and an open Places proxy is free autocomplete for anyone reading the
+app's traffic.
+
+Session tokens: one per search, generated client-side, sent on every
+autocomplete call AND on the final details call — that last one is what
+closes the session and bundles the whole search into ONE charge. Omitted or
+reused, every keystroke-batch is billed separately. It is a body field on
+autocomplete but a query param on details. Never reuse a token for a second
+search.
+
+place_id is stored on bookings but unread. It cannot be back-filled, and it
+is the only Google content the Maps Platform terms allow storing
+indefinitely — coordinates get 30 days, everything else (addresses,
+autocomplete predictions) cannot be cached at all. That is why
+place_coordinates has no address column, and why purge_expired issues a real
+DELETE at 29 days rather than filtering stale rows on read.
+
+The coordinate cache is consulted ONLY when there is no session token. A
+token means a live search whose details call must reach Google to close the
+billing session; serving that from cache would save one call and buy several
+unbundled autocomplete charges. Its read path is therefore dormant until
+something re-resolves a saved place_id; the write path runs now.
+
+Fare still uses haversine x 1.4. Distance Matrix is spec 013.
+
+Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
+than done on the Places endpoints alone, which would leave /estimate exposed
+while looking covered — and a per-user counter in Postgres would recreate the
+write amplification the expiry throttle just removed. Waits for Redis in
+phase 3. Each proxy call logs the caller id so that spec can pick a threshold
+from evidence.
+
 Known gaps:
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play

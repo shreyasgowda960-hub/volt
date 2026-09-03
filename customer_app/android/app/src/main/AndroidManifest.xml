@@ -25,6 +25,25 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Maps SDK for Android reads the key from here; there is no way to
+             inject it at runtime the way API_BASE_URL is, because the native
+             SDK reads the manifest before any Dart runs.
+
+             Committed rather than kept out of the repo, and this is the same
+             value that already sits in google-services.json — so it adds no
+             new exposure. It is a client identifier, not a secret: it is
+             restricted to this package name plus our signing SHA-1, it ships
+             inside every APK regardless, and Google rejects it for the
+             Places and Geocoding web services (verified: REQUEST_DENIED,
+             "not authorized... with empty referer"). That rejection is
+             exactly why those two go through our backend instead.
+
+             Same reasoning as the deliberate decision to track
+             google-services.json — do not add an ignore rule for it. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="AIzaSyDe37ttlPO3MC8bz9P2ztN5o4uQrZZgB-M" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

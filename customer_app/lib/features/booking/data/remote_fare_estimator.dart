@@ -1,7 +1,7 @@
 import 'package:volt_core/volt_core.dart';
 
 import '../domain/fare_estimate.dart';
-import '../domain/location.dart';
+import '../domain/place.dart';
 import '../domain/vehicle_type.dart';
 import 'fare_estimator.dart';
 
@@ -12,18 +12,18 @@ class RemoteFareEstimator implements FareEstimator {
 
   @override
   Future<List<FareEstimate>> estimateAll(
-    Location pickup,
-    Location drop, {
+    Place pickup,
+    Place drop, {
     required double approxWeightKg,
   }) async {
     final json = await _api.post('/api/v1/bookings/estimate', {
       'pickup': {
-        'address': pickup.name,
+        'address': pickup.address,
         'lat': pickup.lat,
         'lng': pickup.lng,
       },
       'drop': {
-        'address': drop.name,
+        'address': drop.address,
         'lat': drop.lat,
         'lng': drop.lng,
       },
