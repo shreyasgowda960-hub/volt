@@ -7,7 +7,7 @@ from sqlalchemy import text
 from app.auth import init_firebase
 from app.config import get_settings
 from app.database import engine
-from app.routers import bookings, drivers, service_area, vehicle_types
+from app.routers import bookings, drivers, places, service_area, vehicle_types
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ app.include_router(bookings.router)
 app.include_router(drivers.router)
 app.include_router(vehicle_types.router)
 app.include_router(service_area.router)
+app.include_router(places.router)
 
 
 @app.get("/api/v1/health")

@@ -9,7 +9,13 @@ from alembic import context
 
 from app.config import get_settings
 from app.database import Base
-from app.models import booking, driver, user, vehicle_type  # noqa: F401
+from app.models import (  # noqa: F401
+    booking,
+    driver,
+    place_coordinate,
+    user,
+    vehicle_type,
+)
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
