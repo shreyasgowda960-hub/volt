@@ -388,6 +388,28 @@ write amplification the expiry throttle just removed. Waits for Redis in
 phase 3. Each proxy call logs the caller id so that spec can pick a threshold
 from evidence.
 
+Verified on device (step D). Recorded because "it is merged, so it probably
+works" is not evidence, and a year from now nobody will remember which parts
+were actually exercised on a phone as opposed to only under test.
+
+Spec 011 — polling + driver details:
+- Customer screen advances within ~5s of a status change, with no manual
+  refresh.
+- Driver notices a customer cancellation within ~5s, without navigating away
+  from the active job screen.
+- Polling STOPS on a delivered booking, confirmed in the server logs — no
+  repeating requests for that code. This was the check most likely to fail
+  silently, since a leaked poller looks fine in the UI.
+
+Spec 012 — real addresses:
+- Autocomplete, map pin drop, current location, service-area rejection, and a
+  full booking with real addresses all pass.
+- Run against the local server on the branch, then re-run against production
+  after the merge — so the deployed key, its restrictions and its quota caps
+  are all confirmed working, not just the local ones.
+- Real addresses render correctly on the driver job board, which is the one
+  cross-app consequence of dropping the six hardcoded locations.
+
 Known gaps:
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
@@ -397,6 +419,6 @@ Known gaps:
 - Reverse geocode is uncached by necessity, so a customer who drags the map
   a lot spends a billable call per settle. The on-idle trigger is the only
   mitigation.
-- Step D device-test results for specs 011 and 012 were never recorded here.
-  Both are merged and live, so they presumably passed, but nothing in the
-  repo says so.
+- Nothing verified on device is re-verified automatically. See the
+  device-verification record above; anything not listed there has only been
+  proven by tests and analysis, not on a phone.
