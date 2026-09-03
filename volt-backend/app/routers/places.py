@@ -152,9 +152,24 @@ async def place_details(
     # Stored on every fresh resolve, including live searches. The write side
     # is what makes the cache worth anything later; the read side above stays
     # dormant until something re-resolves a saved place id.
+    #
+    # Stored under BOTH ids when they differ, which they routinely do. Google
+    # answers Place Details with its own canonical id, and for address-type
+    # predictions — the long "EkY…" blobs autocomplete returns for a street
+    # or building, as opposed to a "ChIJ…" establishment — that is not the id
+    # that was asked for. Writing only the resolved id meant writing a key
+    # nothing ever looks up, so the cache had a silent 0% hit rate for
+    # exactly the searches a logistics customer makes most. Found by calling
+    # the real API; a stub that echoes back its argument cannot show this.
+    #
+    # Both are place ids, so both may be stored indefinitely under the terms.
     await place_cache.store_coordinates(
         db, resolved.place_id, resolved.lat, resolved.lng
     )
+    if resolved.place_id != payload.place_id:
+        await place_cache.store_coordinates(
+            db, payload.place_id, resolved.lat, resolved.lng
+        )
 
     return ResolvedPlaceResponse(
         place_id=resolved.place_id,

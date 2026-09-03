@@ -52,13 +52,6 @@ async def _cleanup_cache(*place_ids: str) -> None:
         await db.commit()
 
 
-def _with_key(value: str | None = "test-key"):
-    """Overrides GOOGLE_MAPS_API_KEY through the settings cache."""
-    return patch.dict(
-        "os.environ", {"GOOGLE_MAPS_API_KEY": value} if value else {}, clear=False
-    )
-
-
 # --- Authentication -------------------------------------------------------
 
 
@@ -507,3 +500,67 @@ async def test_store_coordinates_upserts_and_restarts_the_clock():
     assert row.cached_at > before
 
     await _cleanup_cache(place_id)
+
+
+@pytest.mark.asyncio
+async def test_details_caches_under_the_requested_id_too():
+    """Google answers Place Details with its own canonical id, which for an
+    address-type prediction is NOT the id autocomplete handed out.
+
+    Caching only the resolved id meant a later lookup by the requested id
+    always missed — a silent 0% hit rate on precisely the street-and-building
+    searches this app is for. The earlier test could not catch it because its
+    stub echoed back whatever id it was given.
+    """
+    requested = "ElVrequested_address_prediction_blob"
+    canonical = "EkYcanonical_id_google_actually_returns"
+    phone = "+919000013009"
+    await _cleanup_user(phone)
+    await _cleanup_cache(requested, canonical)
+
+    resolved = ResolvedPlace(
+        place_id=canonical,
+        address="80 Feet Rd, 5th Block, Koramangala, Bengaluru",
+        lat=12.9360386,
+        lng=77.6156764,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        with _mock_token("uid-places-9", phone):
+            with patch(
+                "app.services.google_maps.place_details", return_value=resolved
+            ):
+                first = await client.post(
+                    "/api/v1/places/details",
+                    json={"place_id": requested, "session_token": "tok"},
+                    headers=_AUTH_HEADERS,
+                )
+
+            # Re-resolve with no session token, using the id the CLIENT was
+            # originally given. This must hit the cache.
+            with patch("app.services.google_maps.place_details") as mocked:
+                by_requested = await client.post(
+                    "/api/v1/places/details",
+                    json={"place_id": requested},
+                    headers=_AUTH_HEADERS,
+                )
+                # And the canonical id, which is what the client actually
+                # holds after the first call, must hit too.
+                by_canonical = await client.post(
+                    "/api/v1/places/details",
+                    json={"place_id": canonical},
+                    headers=_AUTH_HEADERS,
+                )
+
+    assert first.status_code == 200
+    assert first.json()["place_id"] == canonical
+
+    for resp in (by_requested, by_canonical):
+        assert resp.status_code == 200
+        assert resp.json()["from_cache"] is True
+        assert resp.json()["lat"] == 12.9360386
+    mocked.assert_not_awaited()
+
+    await _cleanup_cache(requested, canonical)
+    await _cleanup_user(phone)
