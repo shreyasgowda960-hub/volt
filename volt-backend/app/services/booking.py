@@ -22,6 +22,7 @@ from app.services.booking_lifecycle import (
     timestamp_column_for,
 )
 from app.services.fare import VehicleCapacityExceeded, _fare_paise, load_vehicle_type
+from app.services.service_area import check_within_service_area
 from app.utils.codes import generate_public_code
 from app.utils.distance import eta_minutes, road_distance_m
 
@@ -87,6 +88,12 @@ async def _unique_public_code(db: AsyncSession) -> str:
 async def create_booking(
     db: AsyncSession, payload: BookingCreate, user: User
 ) -> Booking:
+    # Enforced here rather than in the router so no future route can create a
+    # booking that skips it. The app pre-checks the same thing for a faster
+    # message; that is UX, this is the rule.
+    check_within_service_area(payload.pickup.lat, payload.pickup.lng, "pickup")
+    check_within_service_area(payload.drop.lat, payload.drop.lng, "drop")
+
     vehicle = await load_vehicle_type(db, payload.vehicle_type_code)
     if payload.approx_weight_kg > vehicle.capacity_kg:
         raise VehicleCapacityExceeded(payload.approx_weight_kg, vehicle)
@@ -106,9 +113,11 @@ async def create_booking(
         pickup_address=payload.pickup.address,
         pickup_lat=payload.pickup.lat,
         pickup_lng=payload.pickup.lng,
+        pickup_place_id=payload.pickup.place_id,
         drop_address=payload.drop.address,
         drop_lat=payload.drop.lat,
         drop_lng=payload.drop.lng,
+        drop_place_id=payload.drop.place_id,
         goods_description=payload.goods_description,
         approx_weight_kg=payload.approx_weight_kg,
         quoted_fare_paise=_fare_paise(vehicle, distance_m),

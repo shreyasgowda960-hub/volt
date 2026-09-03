@@ -27,6 +27,7 @@ from app.services.booking_lifecycle import (
     VehicleTypeMismatch,
 )
 from app.services.fare import VehicleCapacityExceeded, VehicleTypeNotFound, estimate_all
+from app.services.service_area import OutsideServiceArea, check_within_service_area
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,19 @@ async def estimate_fare(
     payload: EstimateRequest,
     db: AsyncSession = Depends(get_db),
 ) -> EstimateResponse:
+    # Checked in the route rather than in estimate_all, because unlike
+    # create_booking there is no service function here that owns the request
+    # as a whole — estimate_all takes loose coordinates and returns prices.
+    try:
+        check_within_service_area(payload.pickup.lat, payload.pickup.lng, "pickup")
+        check_within_service_area(payload.drop.lat, payload.drop.lng, "drop")
+    except OutsideServiceArea as e:
+        logger.info("estimate refused: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.user_message,
+        )
+
     distance_m, eta, options = await estimate_all(
         db,
         payload.pickup.lat,
@@ -63,6 +77,12 @@ async def create_booking(
 ) -> BookingResponse:
     try:
         created = await booking_service.create_booking(db, payload, user)
+    except OutsideServiceArea as e:
+        logger.info("booking refused for %s: %s", user.id, e)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.user_message,
+        )
     except VehicleTypeNotFound:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

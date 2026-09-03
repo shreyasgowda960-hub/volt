@@ -11,6 +11,9 @@ class LocationIn(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
 
+    # Optional: a pin drop has no place id, and older app builds send none.
+    place_id: str | None = Field(default=None, max_length=255)
+
 
 class EstimateRequest(BaseModel):
     pickup: LocationIn

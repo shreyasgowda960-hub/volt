@@ -133,6 +133,22 @@ class Booking(Base, TimestampMixin):
     drop_lat: Mapped[float] = mapped_column(Float, nullable=False)
     drop_lng: Mapped[float] = mapped_column(Float, nullable=False)
 
+    # Google place ids for whichever end came from address search rather than
+    # a dropped pin. Nothing reads them yet.
+    #
+    # Captured now because they cannot be captured later: a place id is
+    # stable and re-resolvable, where the free-text address beside it is
+    # neither, and there is no way to back-fill an id for a booking that has
+    # already happened. Cheap insurance against needing to re-derive "which
+    # building was this actually" for a dispute or a delivery-density map.
+    #
+    # Also the one piece of Google content the Maps Platform terms allow us
+    # to store indefinitely — everything else is capped at 30 days.
+    pickup_place_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    drop_place_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # --- Goods -----------------------------------------------------------
     goods_description: Mapped[str] = mapped_column(String(255), nullable=False)
     approx_weight_kg: Mapped[float] = mapped_column(
