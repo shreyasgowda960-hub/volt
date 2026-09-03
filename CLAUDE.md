@@ -91,9 +91,10 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 
 
 ## Current state — keep this updated
-Phase 2 done. Customer app and driver app both working on device (RMX3371,
-Android 14). Spec 011 (polling + driver details) built on feat/polling, not
-yet verified on device. Phase 3 next.
+Phase 3 in progress. Customer app and driver app both working on device
+(RMX3371, Android 14). Specs 011 (polling + driver details) and 012 (real
+addresses) are merged to main and live in production. Spec 013 is Distance
+Matrix; rate limiting wants its own spec before that.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -299,9 +300,26 @@ cause. Every read path must ask: selectinload(Booking.driver).
 get_booking_with_driver is separate from get_booking_by_code so the four
 driver mutation paths don't pay a query for a field they never touch.
 
-Real addresses (spec 012, built on feat/real-addresses, NOT yet verified on
-device). The six hardcoded Bengaluru locations are gone; pickup and drop come
-from Places autocomplete or a dropped pin.
+Real addresses (spec 012, merged to main and live in production). The six
+hardcoded Bengaluru locations are gone; pickup and drop come from Places
+autocomplete, a dropped pin, or the device location button.
+
+The address picker is one screen with two modes sharing ONE search field,
+controller, debounce timer and session token — the field sits outside the
+mode switch precisely so there is only ever one token, since an unmatched one
+is billed as if there were none. Search mode returns the chosen place; map
+mode pans to it so the pin can then be moved onto the actual gate. It opens
+in map mode when something is already selected (so the existing pin is
+visible) and in search mode when nothing is.
+
+Location permission is requested on the button tap, never on screen open: a
+dialog that appears as a screen loads gets dismissed reflexively, and on
+Android a reflexive deny is one tap from deniedForever. Services-off,
+denied and deniedForever are three different messages with three different
+remedies (device location settings vs APP settings vs just tap again), and
+none of them blocks the picker — search always still works. Permissions are
+FINE + COARSE only; background location is deliberately absent because it
+would need a Play Store declaration for something we never use.
 
 Service area is env-driven on purpose: SERVICE_CENTER_LAT/LNG and
 SERVICE_RADIUS_KM, exposed by public GET /api/v1/service-area. The radius can
@@ -353,6 +371,14 @@ billing session; serving that from cache would save one call and buy several
 unbundled autocomplete charges. Its read path is therefore dormant until
 something re-resolves a saved place_id; the write path runs now.
 
+Coordinates are stored under BOTH the requested and the returned place id
+when they differ, which they routinely do: Place Details answers with
+Google's canonical id, and for an address-type prediction (the long "EkY..."
+blobs autocomplete gives for a street or building, as opposed to a "ChIJ..."
+establishment) that is not the id that was asked for. Writing only one of
+them meant writing a key nothing would ever look up. Found by calling the
+real API — a stub that echoes back its own argument cannot show this.
+
 Fare still uses haversine x 1.4. Distance Matrix is spec 013.
 
 Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
@@ -366,6 +392,11 @@ Known gaps:
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config.
-- Spec 011 is built but NOT yet verified on device (step D), and not merged.
-  The check that matters most: with a delivered booking on screen, the server
-  log must show no repeating requests for that code.
+- No rate limiting anywhere (see above). The Google-side per-API quota cap
+  is currently the only thing bounding spend if a client misbehaves.
+- Reverse geocode is uncached by necessity, so a customer who drags the map
+  a lot spends a billable call per settle. The on-idle trigger is the only
+  mitigation.
+- Step D device-test results for specs 011 and 012 were never recorded here.
+  Both are merged and live, so they presumably passed, but nothing in the
+  repo says so.

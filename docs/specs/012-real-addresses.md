@@ -265,3 +265,125 @@ fare still uses haversine until spec 013.
 6. Anything you were tempted to build and did not
 
 Do not add Distance Matrix. Do not push.
+
+---
+
+# What actually shipped — deltas from the spec above
+
+This spec was written before the Google docs were checked, and several of its
+assumptions did not survive that. Recorded here rather than by editing the
+text above, so the reasoning stays visible.
+
+## The one-key premise was wrong (Part A, and the "do NOT create a second API
+key" guardrail)
+
+An API key with an **Android application restriction does not work against
+the Places or Geocoding web services**. Google's security guidance is
+explicit — an Android-restricted key "cannot be used with iOS, web services,
+or JavaScript APIs" — and it recommends a proxy between mobile clients and
+web service endpoints. Verified directly: calling Geocoding with the Android
+key returns `REQUEST_DENIED`, "not authorized to use this API key... with
+empty referer".
+
+So a client-side implementation would have needed a key with **no**
+application restriction, shipped extractable inside every APK and billable by
+anyone who pulled it out. The guardrail was overridden deliberately.
+
+**What shipped instead:**
+
+- A second, server-side key in `GOOGLE_MAPS_API_KEY`. Application restriction
+  **none** (Render's free plan has no static outbound IP, only CIDR ranges
+  shared with every other tenant in the region, so an IP restriction would
+  allowlist thousands of strangers or break when Render revises its ranges),
+  API-restricted to Places API (New) + Geocoding, with **per-API daily quota
+  caps as the control that actually bounds damage**.
+- The Android key keeps only Maps SDK for Android, which is what Android
+  restrictions are for. Its key lives in `AndroidManifest.xml` — the same
+  value already committed in `google-services.json`, so it adds no exposure.
+
+## New backend section (not in the spec at all)
+
+Three **authenticated** proxy endpoints:
+
+- `POST /api/v1/places/autocomplete`
+- `POST /api/v1/places/details`
+- `POST /api/v1/places/reverse-geocode`
+
+Authenticated unlike `POST /bookings/estimate`, which stays public. The split
+is who pays: price discovery costs a haversine, these cost money per call, and
+an open Places proxy is free autocomplete for anyone reading the app's
+traffic. `POST` rather than `GET` even for the reads, because a `GET` puts
+the search text and pin coordinates in the request line, which Render's
+access log retains — and in a logistics app that text is usually somebody's
+home.
+
+Missing key gives **503** with a message telling the customer what to do
+instead, not 500 and not a crash at boot.
+
+Plus a `place_coordinates` cache table (migration `748441422263`) — see
+below — and a `logger.info` per proxy call carrying the caller id, so the
+rate-limit spec can pick a threshold from evidence.
+
+## Caching was requested mid-branch, then narrowed for licence reasons
+
+The ask was to cache autocomplete and reverse-geocode responses. The Maps
+Platform terms do not permit that: a **place id may be kept indefinitely**
+and **lat/lng for at most 30 consecutive days, after which it must be
+deleted**, but "content, except for the place ID, should not be pre-fetched,
+cached, or stored". Autocomplete predictions are content, and a reverse
+geocode's `formatted_address` is its payload rather than the exempt lat/lng.
+
+There was also a cost argument pointing the same way: with session tokens the
+billable unit is the **session**, so an autocomplete cache hit still leaves
+the user mid-session and still calling Place Details. It saves latency and
+roughly no money, while being the non-compliant half.
+
+**What shipped:** a `place_id -> (lat, lng)` cache only, 29-day window for
+headroom under the 30-day rule, and `purge_expired` issues a real `DELETE` —
+filtering stale rows on read is not deletion, and the terms say delete.
+
+## Rate limiting deferred to its own spec
+
+Considered for the three proxy endpoints and deliberately not done there. A
+limiter on Places alone reads as "this API is rate limited" to whoever comes
+next, while leaving the public `/estimate` unprotected; and a per-user
+counter in Postgres would recreate the write amplification the expiry
+throttle had just removed. It waits for Redis in phase 3.
+
+## Smaller corrections
+
+| Spec said | Actual |
+|---|---|
+| C1: `minSdkVersion` bump needed | Already 24. `flutter.minSdkVersion = 24`, plugin wants 24+. No change. |
+| C1: evaluate a Places wrapper package | Direct REST won, but **from the backend** — the wrapper question became moot once the key moved server-side. |
+| C2: `PlacesService` calls Google | It calls our own proxy, through the existing `ApiClient`, so it inherits auth, error translation and the `isRemote` 60s timeouts. |
+| Session token "passed to both suggest and detail" | True, but by **different transports**: a JSON body field on autocomplete, a `?sessionToken=` query param on details. |
+| "Restrict results to India" + "bias to the centre" | Both, via different fields: `includedRegionCodes: ["in"]` plus `locationBias.circle`. `locationBias` and `locationRestriction` are mutually exclusive, and bias is required — a restriction returns nothing for an address just outside the radius, where the spec's own Hosur test needs the suggestion to appear so it can be blocked. |
+| Errors surface as HTTP failures | Geocoding answers **HTTP 200 with a `status` field**, so `REQUEST_DENIED` from a bad key looks like success to a code-only check. |
+
+`locationBias.circle.radius` is metres, capped at 50000, and is clamped —
+`SERVICE_RADIUS_KM` is an env var and a mis-set `100` would otherwise 400
+every search in a way that looks like a code bug.
+
+## Added to Part C after the spec
+
+- **Search inside map mode.** Selecting a result pans the map instead of
+  returning, so the pin can be adjusted afterwards. Required moving the
+  search field out of the mode switch so both modes share one controller,
+  debounce timer and session token.
+- **Opens in map mode when a location is already selected**, so the seeded
+  pin is visible; search mode when nothing is.
+- **Current-location button** (`geolocator ^14.0.3`), permission requested on
+  tap, all three failure modes handled without blocking search.
+
+## Bug that only a live call could find
+
+Place Details returns Google's canonical place id, which for address-type
+predictions differs from the id autocomplete handed out. The cache read by
+the requested id and wrote by the resolved one, so it wrote keys nothing
+would ever look up — a silent 0% hit rate on exactly the street-and-building
+searches this app is for. Now stored under both. Fixed in `09f205b`.
+
+## Still true
+
+Fare is unchanged: haversine x 1.4. Distance Matrix is spec 013.
