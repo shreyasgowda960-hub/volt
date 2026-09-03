@@ -426,6 +426,24 @@ Adding firebase_crashlytics forced firebase_core to 4.14.0, which
 firebase_auth 6.5.7 cannot compile against. firebase_auth is now 6.6.1.
 Adding one Firebase package can require moving another.
 
+Crashlytics pulls com.google.firebase:firebase-measurement-connector:20.0.1
+transitively — confirmed with `gradlew :app:dependencies`, whose parent chain
+is firebase-crashlytics directly. It is an interop shim, not Analytics: no
+firebase-analytics and no play-services-measurement* artifact is in the tree,
+no firebase_analytics Dart package exists, and every google-services.json has
+an EMPTY analytics_service block. So the apps ship no Analytics collection
+code, and the "do NOT add analytics" guardrail holds.
+
+The console's Logs & Breadcrumbs tab nonetheless shows screen_view,
+session_start and initialized_rh_api attributed to Analytics. firebase-sessions
+(also pulled by Crashlytics) accounts for session grouping, and
+initialized_rh_api is not a documented Firebase Analytics event name, which
+points at Firebase/Play-services internals rather than anything we declare.
+Not fully explained from the repo side — see the note in
+docs/specs/013 for how to settle it. Breadcrumbs carry no PII either way,
+which is the part that matters, and the connector cannot be excluded without
+breaking Crashlytics.
+
 Verified on device (step D). Recorded because "it is merged, so it probably
 works" is not evidence, and a year from now nobody will remember which parts
 were actually exercised on a phone as opposed to only under test.
@@ -438,6 +456,17 @@ Spec 011 — polling + driver details:
 - Polling STOPS on a delivered booking, confirmed in the server logs — no
   repeating requests for that code. This was the check most likely to fail
   silently, since a leaked poller looks fine in the UI.
+
+Spec 013 Part A — Crashlytics (release build, real device):
+- Test crash reported, stack trace readable, R8 mapping id present.
+- PII check passed: Keys shows only api_base_url and app; no phone number in
+  any field. booking_status was absent as expected — the crash was triggered
+  from the booking home screen, which never sets it.
+- Rebuilt without --dart-define=CRASH_TEST and confirmed the button is not
+  merely hidden but compiled out: the string "Force a test crash" is present
+  in all three libapp.so ABIs in the CRASH_TEST build and absent from every
+  .so, .dex and asset without it. bool.fromEnvironment folds to a const, so
+  the tree-shaker removes the widget entirely.
 
 Spec 012 — real addresses:
 - Autocomplete, map pin drop, current location, service-area rejection, and a

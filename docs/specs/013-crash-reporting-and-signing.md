@@ -395,3 +395,41 @@ was absent from both. The definitive check is asking Gradle:
 which lists a "Firebase Crashlytics tasks" group including
 `injectCrashlyticsMappingFileIdRelease` and
 `uploadCrashlyticsMappingFileRelease`. Confirmed for both apps.
+
+## Where the Analytics breadcrumbs come from
+
+The console's Logs & Breadcrumbs tab shows `screen_view`, `session_start` and
+`initialized_rh_api`, sourced from Analytics, despite the guardrail against
+adding analytics. What is established from the repo:
+
+| Check | Result |
+|---|---|
+| `firebase_analytics` Dart package | absent from all three pubspec.locks |
+| `firebase-analytics` Gradle artifact | absent from `releaseRuntimeClasspath` |
+| `play-services-measurement*` | absent |
+| `firebase-measurement-connector:20.0.1` | **present**, parent chain is `com.google.firebase:firebase-crashlytics` directly |
+| `firebase-sessions` | present, also via Crashlytics |
+| `analytics_service` in every `google-services.json` | `{}` — empty |
+
+So no Analytics **collection** SDK ships, and the guardrail holds:
+`firebase-measurement-connector` is an interop shim that lets Crashlytics
+subscribe to Analytics events *if* an implementation is present. It contains
+no event collection of its own and cannot be excluded without breaking
+Crashlytics.
+
+That accounts for the guardrail but not fully for the three event names.
+`session_start` is consistent with `firebase-sessions`, which Crashlytics uses
+to group reports into sessions. `initialized_rh_api` is not a documented
+Firebase Analytics event, which points at Firebase or Play-services internals
+rather than anything this app declares.
+
+**To settle it properly:** Firebase console → Analytics → Realtime/DebugView.
+If no data stream exists for either app, nothing is being collected and the
+breadcrumb list is Firebase's own session instrumentation surfaced under the
+Analytics label. If a stream *does* show app events, something is reporting
+that the dependency tree says is not in the APK, and that is worth chasing.
+
+Either way the breadcrumbs carry no PII, which is the property that matters —
+but this is recorded rather than assumed, because "no analytics package was
+added" and "no analytics events exist" are different claims and only the
+first one is proven here.
