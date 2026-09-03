@@ -14,6 +14,9 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // After Firebase, before runApp: the handlers need Firebase up, and an
+  // error thrown during the first frame should already be reportable.
+  await initCrashReporting(appName: 'driver');
   runApp(const ProviderScope(child: VoltDriverApp()));
 }
 

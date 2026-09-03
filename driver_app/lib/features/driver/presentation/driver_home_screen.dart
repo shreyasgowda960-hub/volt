@@ -179,10 +179,17 @@ class _OfflineMessage extends StatelessWidget {
     return const Center(
       child: Padding(
         padding: EdgeInsets.all(24),
-        child: Text(
-          "You're offline. Go online to see jobs.",
-          style: TextStyle(color: AppColors.textSecondary),
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              "You're offline. Go online to see jobs.",
+              style: TextStyle(color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+            // Absent unless built with --dart-define=CRASH_TEST=true.
+            CrashTestButton(),
+          ],
         ),
       ),
     );

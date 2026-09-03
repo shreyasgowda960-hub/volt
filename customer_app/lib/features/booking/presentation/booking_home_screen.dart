@@ -188,6 +188,8 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                 child: const Text('See fare estimates'),
               ),
               const SizedBox(height: 24),
+              // Absent unless built with --dart-define=CRASH_TEST=true.
+              const CrashTestButton(),
             ],
           ),
         ),

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:volt_core/volt_core.dart';
 
 import '../domain/booking.dart';
+import '../domain/booking_status.dart';
 import 'booking_providers.dart';
 
 /// What the status screen renders: the booking, plus how badly out of date it
@@ -60,6 +61,10 @@ class BookingWatcher extends AsyncNotifier<BookingWatchState> {
   Poller? _poller;
   bool _disposed = false;
 
+  /// Last status pushed to Crashlytics, so the custom key is written on a
+  /// transition rather than on every one of the 5s polls.
+  BookingStatus? _reportedStatus;
+
   @override
   Future<BookingWatchState> build() async {
     ref.onDispose(() {
@@ -83,7 +88,19 @@ class BookingWatcher extends AsyncNotifier<BookingWatchState> {
         ..start(fetchImmediately: false);
     }
 
+    _reportBookingStatus(booking.status);
     return BookingWatchState(booking: booking);
+  }
+
+  /// Attaches the current booking status to any crash report, so a crash that
+  /// happens mid-delivery is distinguishable from one on a finished booking.
+  ///
+  /// The status only, never the public_code — a booking code resolves to an
+  /// address through our own database, which makes it PII one step removed.
+  void _reportBookingStatus(BookingStatus status) {
+    if (status == _reportedStatus) return;
+    _reportedStatus = status;
+    setCrashReportingKey('booking_status', status.name);
   }
 
   Future<Booking> _fetch() =>
@@ -97,6 +114,7 @@ class BookingWatcher extends AsyncNotifier<BookingWatchState> {
       if (_disposed) return;
 
       state = AsyncData(BookingWatchState(booking: booking));
+      _reportBookingStatus(booking.status);
 
       if (booking.status.isTerminal) {
         // Permanent. Not a pause: coming back from the background must not

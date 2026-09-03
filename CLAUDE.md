@@ -93,8 +93,9 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 ## Current state — keep this updated
 Phase 3 in progress. Customer app and driver app both working on device
 (RMX3371, Android 14). Specs 011 (polling + driver details) and 012 (real
-addresses) are merged to main and live in production. Spec 013 is Distance
-Matrix; rate limiting wants its own spec before that.
+addresses) are merged to main and live in production. Spec 013 is crash
+reporting and release signing (Part A done, Part B deferred). Distance Matrix
+moved to spec 014; rate limiting wants its own spec before that.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -379,7 +380,7 @@ establishment) that is not the id that was asked for. Writing only one of
 them meant writing a key nothing would ever look up. Found by calling the
 real API — a stub that echoes back its own argument cannot show this.
 
-Fare still uses haversine x 1.4. Distance Matrix is spec 013.
+Fare still uses haversine x 1.4. Distance Matrix is spec 014.
 
 Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
 than done on the Places endpoints alone, which would leave /estimate exposed
@@ -387,6 +388,43 @@ while looking covered — and a per-user counter in Postgres would recreate the
 write amplification the expiry throttle just removed. Waits for Redis in
 phase 3. Each proxy call logs the caller id so that spec can pick a threshold
 from evidence.
+
+Crash reporting (spec 013 Part A). Crashlytics in both apps, wired in
+volt_core (src/observability/) rather than per app so the two cannot drift.
+All three error paths are covered: FlutterError.onError for framework errors,
+PlatformDispatcher.instance.onError for async errors that never reach the
+framework — the one most often missed, and where most real crashes live —
+and native crashes automatically via the Gradle plugin.
+
+PlatformDispatcher's handler MUST return true. Returning false re-raises to
+the platform, which on Android kills the process; reporting a crash would
+cause one.
+
+Release-only by collection, not by wiring: handlers are always installed and
+setCrashlyticsCollectionEnabled(!kDebugMode) switches off the upload. Gating
+the handler assignments instead would make the error path differ between
+debug and release, so a bug in a handler would only ever show up in the build
+you cannot debug. Debug console output is unaffected.
+
+Crash reports carry the Firebase uid and NOTHING else identifying. Never a
+phone number, name or address, and never a booking code — a code resolves to
+an address through our own database, which makes it PII one step removed.
+Custom keys are app, api_base_url, and booking_status (written on change
+only, not on every 5s poll). The uid is set in SessionNotifier, including the
+restored-session path, which is what most launches take.
+
+The test-crash button lives behind --dart-define=CRASH_TEST=true, not
+kDebugMode: collection is off in debug so a debug-only button could never
+produce a report, and a dart-define keeps it out of every ordinary build by
+construction.
+
+iOS has no dSYM upload phase, so native iOS traces would be
+unsymbolicated. Left unconfigured rather than guessed at — Android is the
+only platform being built.
+
+Adding firebase_crashlytics forced firebase_core to 4.14.0, which
+firebase_auth 6.5.7 cannot compile against. firebase_auth is now 6.6.1.
+Adding one Firebase package can require moving another.
 
 Verified on device (step D). Recorded because "it is merged, so it probably
 works" is not evidence, and a year from now nobody will remember which parts

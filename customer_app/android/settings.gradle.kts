@@ -22,6 +22,11 @@ plugins {
     id("com.android.application") version "9.0.1" apply false
     // START: FlutterFire Configuration
     id("com.google.gms.google-services") version("4.4.4") apply false
+    // Crashlytics. Required per Firebase's Flutter guide, and normally added
+    // by `flutterfire configure` — it was not, because Crashlytics was
+    // enabled in the console after the last configure run. Version from
+    // Google's Maven metadata for firebase-crashlytics-gradle, not memory.
+    id("com.google.firebase.crashlytics") version("3.0.8") apply false
     // END: FlutterFire Configuration
     id("org.jetbrains.kotlin.android") version "2.3.20" apply false
 }

@@ -1,5 +1,7 @@
 export 'src/config/app_config.dart';
 export 'src/network/api_client.dart';
+export 'src/observability/crash_reporting.dart';
+export 'src/observability/crash_test_button.dart';
 export 'src/polling/poller.dart';
 export 'src/theme/app_colors.dart';
 export 'src/theme/app_theme.dart';
