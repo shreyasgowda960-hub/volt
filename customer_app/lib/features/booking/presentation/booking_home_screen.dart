@@ -26,10 +26,18 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
   }
 
   Future<void> _pick({required bool isPickup}) async {
+    // Hand the current selection in so the picker reopens where the customer
+    // left off — map mode centres on it, and the pin starts there rather
+    // than at the city centre.
+    final current = isPickup
+        ? ref.read(pickupLocationProvider)
+        : ref.read(dropLocationProvider);
+
     final chosen = await Navigator.of(context).push<Place>(
       MaterialPageRoute(
         builder: (_) => AddressPickerScreen(
           title: isPickup ? 'Pickup location' : 'Drop location',
+          initial: current,
         ),
       ),
     );
