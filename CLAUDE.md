@@ -498,13 +498,37 @@ a few Retry taps reach ~12. Note the client will also retry a 429 twice, which
 is wasteful but harmless: a blocked window is never extended by further hits,
 so a retrying client cannot lock itself out.
 
-Keyed on the LAST X-Forwarded-For entry, never the first. A proxy appends what
-it saw to whatever the client sent, so the leftmost value is caller-controlled:
-keying on it lets a client rotate a fake IP, never be limited, and grow the
-tracking dict a key per request. Unverified against Render's docs — if there
-is more than one hop in front, the rightmost entry is an inner proxy and the
-per-IP limit silently becomes global. The 429 log line records the chain
-length so real traffic can settle it.
+Keyed on the THIRD X-Forwarded-For entry FROM THE RIGHT. Measured against
+production on 2026-09-05 from a real device:
+
+  106.222.200.144, 172.69.123.178, 10.199.202.132
+  ^ real client     ^ Cloudflare    ^ Render internal
+
+Three trusted hops, each APPENDING what it observed. Counting from the right
+is what makes the index stable: -3 is the address Cloudflare saw no matter how
+many entries a client prepends, because prepending only lengthens the chain
+and shifts nothing at the tail. Spoofing therefore buys nothing.
+
+Both simpler choices are wrong and both were tried. The FIRST entry is
+caller-supplied, so a client rotating a fake value is never limited. The LAST
+entry is Render's internal proxy, IDENTICAL on every request — that shipped
+first, and it made the limiter global rather than per-IP: one 20/min bucket
+shared by every customer in the country. It read as correct, passed its tests,
+and was only caught by measuring the real chain in production. Tests must now
+send a realistic three-entry chain or they exercise the fallback and prove
+nothing, which is exactly how the broken version looked green.
+
+THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY, AND A CHANGE BREAKS IT SILENTLY.
+Drop Cloudflare, add a WAF, move hosting, and -3 names the wrong thing. A hop
+being REMOVED is caught — a chain shorter than three entries logs a WARNING
+naming the actual chain and falls back to the leftmost entry, which is the
+real client in every "hop disappeared" topology (spoofable, but a spoofer is
+still bounded by the Google quota cap, and refusing the request would turn
+someone else's config change into a total outage of fare estimates). A hop
+being ADDED cannot be detected at all: the chain just gets longer and -3
+becomes a proxy address, which reads as one very busy client. RE-MEASURE THE
+CHAIN AFTER ANY INFRASTRUCTURE CHANGE. _TRUSTED_HOPS is the one number to
+move.
 
 What it does NOT do is bound the bill: one IP can still spend 1,200 requests
 an hour. The Google-side per-API daily quota cap remains the only real ceiling.

@@ -20,6 +20,25 @@ What this buys and what it does not: 20/min/IP stops a runaway client loop
 and raises the cost of casual scripted abuse. It does not bound the bill —
 one IP can still spend 1,200 requests an hour. The Google-side per-API daily
 quota cap remains the only real ceiling.
+
+Resolving the client address
+----------------------------
+Everything above depends on keying each caller separately, and getting that
+wrong is silent. Measured against production on 2026-09-05 from a real
+device, the chain is three trusted hops:
+
+    106.222.200.144, 172.69.123.178, 10.199.202.132
+    └ real client      └ Cloudflare    └ Render internal
+
+Trusted hops APPEND the address they observed, so the count is stable from
+the right and unstable from the left. Index -3 is therefore the address
+Cloudflare observed, regardless of how many entries a client prepends —
+prepending only lengthens the chain and shifts nothing at the tail.
+
+Both simpler choices are wrong. The FIRST entry is caller-supplied, so a
+client that rotates a fake value is never limited. The LAST entry is Render's
+internal proxy, identical on every request — that was the original
+implementation, and it made the limiter global instead of per-IP.
 """
 
 from __future__ import annotations
@@ -43,6 +62,12 @@ logger = logging.getLogger(__name__)
 # anything scripted.
 ESTIMATE_LIMIT = 20
 ESTIMATE_WINDOW_SECONDS = 60.0
+
+# Trusted hops between a real client and this process: Cloudflare, then
+# Render's internal proxy, appended in that order after the client's own
+# address. Measured, not assumed — see the module docstring. This is the one
+# number to change if the infrastructure in front of us ever does.
+_TRUSTED_HOPS = 3
 
 # Does not accuse the caller: Indian mobile networks are heavily CGNAT-ed, so
 # one public IP is shared by strangers and this may genuinely not be theirs.
@@ -144,28 +169,73 @@ def reset_rate_limits() -> None:
 
 
 def client_ip(request: Request) -> str:
-    """The address to key on, taken as the LAST X-Forwarded-For entry.
+    """The address to key on: the THIRD X-Forwarded-For entry from the right.
 
-    Not the first. A proxy appends the address it observed to whatever the
-    client already sent, so the leftmost entry is caller-controlled: a client
-    that sets its own X-Forwarded-For and rotates the value would never be
-    limited at all, and would grow the tracking dict by one key per request.
-    The rightmost entry is the one our edge actually saw. With exactly one
-    trusted proxy in front, that is the real client whether the proxy appends
-    to the header or replaces it.
+    Measured against production on 2026-09-05, from a real device:
 
-    VERIFY AGAINST RENDER'S OWN DOCS before trusting this in production. If
-    there is more than one hop, the rightmost entry is an inner proxy — a
-    constant — and every caller would share a single bucket, turning a per-IP
-    limit into a global one. The 429 log line records how many entries the
-    chain carried, which is enough to settle it from real traffic.
+        106.222.200.144, 172.69.123.178, 10.199.202.132
+        └ real client      └ Cloudflare    └ Render internal
+
+    Three trusted hops, each appending the address it observed to the end of
+    whatever it received. So counting from the right is what makes this
+    stable: index -3 is the address Cloudflare saw, no matter how many
+    entries a client prepends. A client that sends its own X-Forwarded-For
+    only makes the chain longer — "spoof, client, CF, render" still resolves
+    to the client at -3 — which is why prepending buys nothing.
+
+    The two obvious alternatives are both wrong, and were both tried:
+
+      * index 0 is whatever the caller sent. A client that rotates a fake
+        leftmost value would never be limited, and would grow the tracking
+        dict by one key per request.
+      * index -1 is Render's internal proxy address, which is IDENTICAL on
+        every request. That was the previous implementation, and it made the
+        limiter global rather than per-IP — 20/min shared by every customer
+        in the country. It looked correct and was not.
+
+    THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY. Add, remove or reorder a hop —
+    drop Cloudflare, put a WAF in front, change hosting — and -3 silently
+    names the wrong thing. Nothing here can detect a hop being ADDED: the
+    chain simply gets longer and -3 becomes a proxy address, which reads as
+    one very busy client. Re-measure the chain after any infrastructure
+    change; the shape is worth re-checking on the deployed service rather
+    than assumed.
     """
     forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
-    return request.client.host if request.client else "unknown"
+    if not forwarded:
+        # No proxy in front at all: local development, or the test suite.
+        # Not a topology change, so not worth a warning — the peer socket is
+        # genuinely the client here.
+        return request.client.host if request.client else "unknown"
+
+    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+
+    if len(parts) >= _TRUSTED_HOPS:
+        return parts[-_TRUSTED_HOPS]
+
+    # Fewer entries than there are trusted hops. A client cannot cause this —
+    # prepending makes the chain longer, never shorter — so it means a hop was
+    # REMOVED and the assumption above no longer holds.
+    #
+    # Falls back to the leftmost entry rather than failing the request or
+    # falling through to the peer socket. In every "a hop disappeared"
+    # topology the leftmost entry is the real client again, so ordinary
+    # per-IP limiting keeps working while the shape is wrong. The peer socket
+    # would be Render's proxy — one global bucket, the exact bug this
+    # function was rewritten to fix — and refusing the request would turn
+    # someone else's config change into a total outage of fare estimates.
+    #
+    # Degrading to "spoofable" is the accepted cost: a spoofer is still
+    # bounded by the Google-side quota cap, which is the real ceiling anyway.
+    logger.warning(
+        "X-Forwarded-For has %d entries, expected at least %d — proxy "
+        "topology has changed and the rate limiter is keying on the leftmost "
+        "entry, which is caller-supplied. Re-measure the chain. Chain was: %s",
+        len(parts),
+        _TRUSTED_HOPS,
+        forwarded,
+    )
+    return parts[0]
 
 
 async def rate_limit_estimate(request: Request) -> None:

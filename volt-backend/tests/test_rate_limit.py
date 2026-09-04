@@ -5,6 +5,7 @@ tests would make them order-dependent in exactly the way the autouse reset in
 conftest exists to prevent — and would hide a reset bug rather than catch it.
 """
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -17,6 +18,22 @@ from app.services.rate_limit import (
     FixedWindowRateLimiter,
     client_ip,
 )
+
+# The two trusted hops in front of us, from the chain measured against
+# production on 2026-09-05. Tests must send a realistic three-entry chain or
+# they exercise the fallback path instead of the real one — which is how the
+# previous version of this file passed while the limiter was globally bucketed.
+_CLOUDFLARE = "172.69.123.178"
+_RENDER_INTERNAL = "10.199.202.132"
+
+
+def _chain(client: str, *prepended: str) -> str:
+    """An X-Forwarded-For shaped the way production actually produces it.
+
+    `prepended` simulates a client that sends its own header: trusted hops
+    append after it, so those entries land on the LEFT of the real address.
+    """
+    return ", ".join([*prepended, client, _CLOUDFLARE, _RENDER_INTERNAL])
 
 # Inside the default 25km service area, so nothing here is refused for a
 # reason that has nothing to do with rate limiting.
@@ -31,11 +48,11 @@ def _payload() -> dict:
     }
 
 
-def _client(ip: str) -> AsyncClient:
+def _client(ip: str, *prepended: str) -> AsyncClient:
     return AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-Forwarded-For": ip},
+        headers={"X-Forwarded-For": _chain(ip, *prepended)},
     )
 
 
@@ -138,31 +155,100 @@ async def test_one_ip_being_limited_does_not_limit_another():
 # --- The key itself -------------------------------------------------------
 
 
-def test_client_ip_takes_the_last_forwarded_entry():
-    """The leftmost entry is whatever the caller sent, so keying on it means
-    a client can rotate a fake value and never be limited. This is the whole
-    security property of the module; assert it directly."""
+class _FakeRequest:
+    def __init__(self, headers: dict, client=None) -> None:
+        self.headers = headers
+        self.client = client
 
-    class _FakeRequest:
-        def __init__(self, headers: dict, client=None) -> None:
-            self.headers = headers
-            self.client = client
 
-    spoofed = _FakeRequest(
-        {"x-forwarded-for": "1.1.1.1, 2.2.2.2, 198.51.100.7"}, client=None
+class _Peer:
+    def __init__(self, host: str) -> None:
+        self.host = host
+
+
+def test_three_entry_chain_resolves_to_the_client():
+    """The measured production shape: client, Cloudflare, Render internal."""
+    request = _FakeRequest({"x-forwarded-for": _chain("106.222.200.144")})
+    assert client_ip(request) == "106.222.200.144"
+
+
+def test_prepended_spoof_entries_resolve_to_the_same_address():
+    """A client sending its own X-Forwarded-For lands on the LEFT of the real
+    address, because trusted hops append. Counting from the right is what
+    makes prepending pointless — assert that directly, with chains of three
+    different lengths that must all produce one key."""
+    plain = _FakeRequest({"x-forwarded-for": _chain("106.222.200.144")})
+    one_spoof = _FakeRequest(
+        {"x-forwarded-for": _chain("106.222.200.144", "1.2.3.4")}
     )
-    assert client_ip(spoofed) == "198.51.100.7"
+    many_spoofs = _FakeRequest(
+        {
+            "x-forwarded-for": _chain(
+                "106.222.200.144", "1.2.3.4", "5.6.7.8", "9.10.11.12"
+            )
+        }
+    )
 
-    single = _FakeRequest({"x-forwarded-for": " 198.51.100.8 "})
-    assert client_ip(single) == "198.51.100.8"
+    assert (
+        client_ip(plain)
+        == client_ip(one_spoof)
+        == client_ip(many_spoofs)
+        == "106.222.200.144"
+    )
 
-    class _Peer:
-        host = "198.51.100.9"
 
-    direct = _FakeRequest({}, client=_Peer())
-    assert client_ip(direct) == "198.51.100.9"
+def test_short_chain_falls_back_to_the_leftmost_entry_and_warns(caplog):
+    """Fewer entries than trusted hops means a hop was removed — a client
+    cannot cause it, since prepending only lengthens the chain.
 
-    assert client_ip(_FakeRequest({}, client=None)) == "unknown"
+    The leftmost entry is the real client in every 'hop disappeared'
+    topology, so limiting keeps working; the warning is what makes the
+    change visible rather than silent.
+    """
+    with caplog.at_level(logging.WARNING, logger="app.services.rate_limit"):
+        two_hops = _FakeRequest(
+            {"x-forwarded-for": f"106.222.200.144, {_RENDER_INTERNAL}"}
+        )
+        assert client_ip(two_hops) == "106.222.200.144"
+
+        one_hop = _FakeRequest({"x-forwarded-for": "106.222.200.144"})
+        assert client_ip(one_hop) == "106.222.200.144"
+
+    assert len(caplog.records) == 2
+    # The warning has to name the actual chain, or nobody can tell what the
+    # new topology is without reproducing it.
+    assert _RENDER_INTERNAL in caplog.records[0].getMessage()
+    assert "topology has changed" in caplog.records[0].getMessage()
+
+
+def test_no_forwarded_header_uses_the_peer_and_does_not_warn(caplog):
+    """Local development and the test suite have no proxy in front. That is
+    not a topology change, so warning there would be noise that trains
+    everyone to ignore the warning that matters."""
+    with caplog.at_level(logging.WARNING, logger="app.services.rate_limit"):
+        assert client_ip(_FakeRequest({}, client=_Peer("198.51.100.9"))) == (
+            "198.51.100.9"
+        )
+        assert client_ip(_FakeRequest({}, client=None)) == "unknown"
+
+    assert caplog.records == []
+
+
+@pytest.mark.asyncio
+async def test_spoofed_entries_cannot_escape_an_exhausted_budget():
+    """The security property, end to end rather than on the helper.
+
+    Exhaust the budget as a normal client, then come back prepending fake
+    entries — the thing an attacker would actually try. It must still be 429.
+    """
+    ip = "203.0.113.16"
+    async with _client(ip) as client:
+        for _ in range(ESTIMATE_LIMIT):
+            await client.post("/api/v1/bookings/estimate", json=_payload())
+
+    async with _client(ip, "1.2.3.4", "5.6.7.8") as spoofer:
+        resp = await spoofer.post("/api/v1/bookings/estimate", json=_payload())
+    assert resp.status_code == 429
 
 
 # --- The counter itself ---------------------------------------------------
