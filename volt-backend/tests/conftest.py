@@ -6,6 +6,7 @@ import pytest_asyncio
 from app.database import engine
 from app.services.booking import reset_expiry_throttle
 from app.services.place_cache import reset_purge_throttle
+from app.services.rate_limit import reset_rate_limits
 from app.services.routing import RouteResult, haversine_fallback
 from app.models.booking import DistanceSource
 
@@ -15,9 +16,14 @@ def _reset_throttles():
     """Both sweeps are throttled by module-level state, so without this the
     first test to sweep would suppress the sweep in every test that ran
     within the next interval — and which tests those are depends on
-    ordering. Reset before each test so every one sees a fresh throttle."""
+    ordering. Reset before each test so every one sees a fresh throttle.
+
+    The rate limiter is the same hazard pointing the other way: its counters
+    are module-level too, so a test that exhausts a budget would 429 every
+    later test sharing that key, again depending on ordering."""
     reset_expiry_throttle()
     reset_purge_throttle()
+    reset_rate_limits()
 
 
 class _FakeRoutingService:

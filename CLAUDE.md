@@ -439,8 +439,9 @@ Consequences to keep in mind, none of them worth reopening this:
   for not trusting a client-supplied distance, which sets the fare.
 - TRAFFIC_AWARE puts both on the Pro SKU.
 - Rate limiting matters more than it did, because there is no cache between a
-  misbehaving client and the bill. Still its own spec; the Google-side quota
-  cap remains the only thing bounding spend.
+  misbehaving client and the bill. /estimate now has a minimal per-IP cap (see
+  the rate limiting section); everything else still waits for its own spec,
+  and the Google-side quota cap remains the only real ceiling on spend.
 
 Graceful degradation is the point of routing.py: timeouts, non-200s, quota
 rejections, malformed bodies and unroutable pairs ALL fall back to haversine
@@ -475,12 +476,43 @@ op.add_column with sa.Enum does NOT emit CREATE TYPE on PostgreSQL, and a
 generated downgrade drops the column while leaving the type behind, so
 re-upgrading fails. Both were caught only by running it.
 
-Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
-than done on the Places endpoints alone, which would leave /estimate exposed
-while looking covered — and a per-user counter in Postgres would recreate the
-write amplification the expiry throttle just removed. Waits for Redis in
-phase 3. Each proxy call logs the caller id so that spec can pick a threshold
-from evidence.
+Rate limiting: ONE endpoint has it. POST /bookings/estimate is capped at 20
+requests per minute per IP (app/services/rate_limit.py, applied as a route
+dependency). This is not the rate-limiting spec — it is the minimum that had
+to exist before spec 014 merged, because /estimate is public, unauthenticated,
+and now spends a live Pro-tier Routes request per call with no cache behind it.
+
+THE COUNTER IS PER PROCESS, AND THAT FAILURE IS SILENT. Render's free plan
+runs a single instance, so today the limit means what it says. Add a second
+instance — or a paid plan with autoscaling — and each keeps its own dict, so
+the effective limit becomes 20 x N. Nothing errors, nothing logs, and the only
+symptom is a Google bill. Whoever adds instance number two must move this to
+Redis in the same change.
+
+20 was chosen from what a real customer can produce, not from a round number.
+One /estimate returns EVERY vehicle option, so comparing bike against
+mini-truck costs zero extra calls; what spends calls is changing pickup, drop,
+the pin or the weight. The worst legitimate case is a cold-start failure — the
+app's FutureProvider retries twice, so one visible error is three requests, and
+a few Retry taps reach ~12. Note the client will also retry a 429 twice, which
+is wasteful but harmless: a blocked window is never extended by further hits,
+so a retrying client cannot lock itself out.
+
+Keyed on the LAST X-Forwarded-For entry, never the first. A proxy appends what
+it saw to whatever the client sent, so the leftmost value is caller-controlled:
+keying on it lets a client rotate a fake IP, never be limited, and grow the
+tracking dict a key per request. Unverified against Render's docs — if there
+is more than one hop in front, the rightmost entry is an inner proxy and the
+per-IP limit silently becomes global. The 429 log line records the chain
+length so real traffic can settle it.
+
+What it does NOT do is bound the bill: one IP can still spend 1,200 requests
+an hour. The Google-side per-API daily quota cap remains the only real ceiling.
+The rest — the Places proxy endpoints, per-user limits, anything needing Redis
+— is still its own spec. Not done on Places alone, which would have left
+/estimate exposed while looking covered; and a per-user counter in Postgres
+would recreate the write amplification the expiry throttle just removed. Each
+proxy call logs the caller id so that spec can pick a threshold from evidence.
 
 Crash reporting (spec 013 Part A). Crashlytics in both apps, wired in
 volt_core (src/observability/) rather than per app so the two cannot drift.
@@ -617,8 +649,11 @@ Known gaps:
     new upload key has a DIFFERENT SHA-1, and Firebase phone auth silently
     fails until that fingerprint is added — so set up and left untested it
     would look finished and break precisely when it mattered.
-- No rate limiting anywhere (see above). The Google-side per-API quota cap
-  is currently the only thing bounding spend if a client misbehaves.
+- Rate limiting covers /estimate only, per IP, in process (see above). The
+  Places proxy endpoints, every driver and booking endpoint, and per-user
+  limits generally are all still uncapped, and the counter silently stops
+  working on a second instance. The Google-side per-API quota cap is still
+  the only thing that actually bounds spend if a client misbehaves.
 - Reverse geocode is uncached by necessity, so a customer who drags the map
   a lot spends a billable call per settle. The on-idle trigger is the only
   mitigation.
