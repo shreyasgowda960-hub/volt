@@ -24,7 +24,7 @@ from app.services.booking_lifecycle import (
 from app.services.fare import VehicleCapacityExceeded, _fare_paise, load_vehicle_type
 from app.services.service_area import check_within_service_area
 from app.utils.codes import generate_public_code
-from app.services.route_cache import route_cached
+from app.services import routing
 
 logger = logging.getLogger(__name__)
 
@@ -99,15 +99,14 @@ async def create_booking(
         raise VehicleCapacityExceeded(payload.approx_weight_kg, vehicle)
 
     # Recomputed server-side rather than trusting whatever the client says
-    # it was quoted. That now costs an API call, which is the correct price
-    # for not trusting a client-supplied distance — and the customer just
-    # estimated this same route, so the cache should make it a hit.
+    # it was quoted. That costs a second live Routes request — the customer
+    # just estimated this same route — and it is still the correct price for
+    # not trusting a client-supplied distance, which sets the fare.
     #
-    # Note only DISTANCE needs to be authoritative here: the fare depends on
-    # distance alone, and duration is snapshotted for reference. So a cached
-    # duration on this path is not a compromise.
-    route = await route_cached(
-        db,
+    # There is deliberately no cache to make this a hit: the Service Specific
+    # Terms permit caching only lat/lng for the Routes API (s19), not distance
+    # or duration.
+    route = await routing.default_routing_service().route(
         payload.pickup.lat,
         payload.pickup.lng,
         payload.drop.lat,

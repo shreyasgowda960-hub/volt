@@ -217,3 +217,17 @@ class GoogleRoutingService:
         # fares dipped for an hour.
         logger.warning("routing: falling back to haversine — %s", reason)
         return haversine_fallback(origin_lat, origin_lng, dest_lat, dest_lng)
+
+
+def default_routing_service() -> RoutingService:
+    """The service every caller uses unless one is injected.
+
+    A single factory rather than each caller constructing its own, for one
+    concrete reason: it gives the test suite exactly one seam to close.
+    Every fare estimate and every booking now makes a live, billable Routes
+    request — there is no cache to absorb the second one — so the autouse
+    guard in tests/conftest.py patches this function. Add a caller that
+    constructs GoogleRoutingService() directly and it will bill real requests
+    from the test suite.
+    """
+    return GoogleRoutingService()

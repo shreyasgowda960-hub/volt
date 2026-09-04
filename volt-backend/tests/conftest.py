@@ -6,20 +6,18 @@ import pytest_asyncio
 from app.database import engine
 from app.services.booking import reset_expiry_throttle
 from app.services.place_cache import reset_purge_throttle
-from app.services.route_cache import reset_purge_throttle as reset_route_purge_throttle
 from app.services.routing import RouteResult, haversine_fallback
 from app.models.booking import DistanceSource
 
 
 @pytest.fixture(autouse=True)
 def _reset_throttles():
-    """All three sweeps are throttled by module-level state, so without this
-    the first test to sweep would suppress the sweep in every test that ran
+    """Both sweeps are throttled by module-level state, so without this the
+    first test to sweep would suppress the sweep in every test that ran
     within the next interval — and which tests those are depends on
     ordering. Reset before each test so every one sees a fresh throttle."""
     reset_expiry_throttle()
     reset_purge_throttle()
-    reset_route_purge_throttle()
 
 
 class _FakeRoutingService:
@@ -61,13 +59,19 @@ class _FakeRoutingService:
 def _block_outbound_routing():
     """Nothing in the suite may call the Routes API for real.
 
-    This is a spend guard, not just determinism: the local .env holds a live
-    key, create_booking now routes on every call, and the booking tests alone
-    would otherwise bill a Routes request each. Patched at the name
-    route_cache imported, so GoogleRoutingService itself stays real for the
-    tests that mock its HTTP layer.
+    A spend guard, not just determinism, and MORE load-bearing since the
+    route cache was removed for licence reasons: there is no longer any cache
+    to absorb a repeat, so every estimate and every booking is its own live
+    billable request. The booking tests alone would bill dozens.
+
+    Patched at default_routing_service, which is the single seam every caller
+    goes through. GoogleRoutingService itself stays real, so the tests in
+    test_routing.py that mock its HTTP layer are unaffected.
     """
-    with patch("app.services.route_cache.GoogleRoutingService", _FakeRoutingService):
+    with patch(
+        "app.services.routing.default_routing_service",
+        lambda: _FakeRoutingService(),
+    ):
         yield
 
 

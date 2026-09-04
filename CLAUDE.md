@@ -415,21 +415,32 @@ quarter. That is a better argument for this spec than "fares rise" was — the
 flat multiplier mis-priced in both directions, worst exactly where a driver
 eats the difference.
 
-Distance is cached, duration is only cached for 15 minutes, and they come
-from one row read under two rules. The Service Specific Terms permit
-temporarily caching "latitude (lat), longitude (lng), distance, duration,
-time, and estimated time of arrival values for up to 30 consecutive calendar
-days, after which customers must delete the cached values" — a WIDER
-exemption than the Places one, which is why route_distances may hold duration
-where place_coordinates may not hold an address. Retention is 29 days for
-headroom, swept by a real throttled DELETE, same as the other two sweeps.
+THERE IS NO ROUTE CACHE, and there must not be one. Every fare estimate and
+every booking is a live, billable Routes request.
 
-Why not the other two cache options: serving distance from cache while always
-calling Google for duration saves ZERO requests, because one request returns
-both. And serving the 20km/h fallback duration on a hit would show the
-customer the exact fake number this spec exists to delete. A haversine result
-is never cached, or a transient outage would stick for the full TTL after it
-recovered.
+The licence forbids it. Service Specific Terms **s19 (Routes API)** permits
+caching **latitude and longitude only**, for 30 days. Distance and duration
+are not in that list, and the master ToS prohibits caching Google Maps
+Content except where the Service Specific Terms expressly permit it — so
+unlisted means not permitted. The omission is deliberate rather than an
+oversight: **s11.8** grants distance and duration caching for the Navigation
+Connect API, so Google knows how to say it when it means it.
+
+A route cache WAS built and then removed. It cached distance for 29 days and
+duration for 15 minutes, on the strength of a clause that turned out to
+belong to a different section. The lesson is not about caching: secondhand
+quotations of a licence are not a licence, and the primary text is the only
+thing worth acting on. Spec 014's B4 guardrail said to stop if the terms
+forbade it. They do.
+
+Consequences to keep in mind, none of them worth reopening this:
+- create_booking recomputes distance server-side, so a booking costs TWO
+  Routes requests — one to estimate, one to create. That is the correct price
+  for not trusting a client-supplied distance, which sets the fare.
+- TRAFFIC_AWARE puts both on the Pro SKU.
+- Rate limiting matters more than it did, because there is no cache between a
+  misbehaving client and the bill. Still its own spec; the Google-side quota
+  cap remains the only thing bounding spend.
 
 Graceful degradation is the point of routing.py: timeouts, non-200s, quota
 rejections, malformed bodies and unroutable pairs ALL fall back to haversine
@@ -441,6 +452,28 @@ otherwise a degraded hour is invisible in the data forever.
 road_distance_m and eta_minutes are unchanged. They are the fallback now, and
 they remain correct for the service-area radius check, which asks how far
 from the centre rather than how far to drive.
+
+THE TEST SPEND GUARD MUST STAY. tests/conftest.py has an autouse fixture
+patching app.services.routing.default_routing_service. Without it the suite
+makes real billable Routes requests: create_booking routes on every call,
+volt-backend/.env holds a live key, and with the cache gone nothing absorbs
+a repeat — every estimate and every booking is its own Pro-tier request.
+
+Every caller reaches the service through the MODULE
+(`routing.default_routing_service()`), never a from-import. That is not
+style: a from-import binds the name into the calling module at import time,
+so patching it at its definition site does nothing. The guard silently
+failed to engage exactly that way the first time — 49 tests were reaching
+the real client while the suite looked green. Proved by making the real
+client raise and watching the failures drop from 49 to 14, the 14 being
+test_routing.py, which constructs the client deliberately and mocks its HTTP
+layer.
+
+Round-trip every migration before committing it: upgrade, downgrade -1,
+upgrade. A migration file can look completely correct and still be wrong —
+op.add_column with sa.Enum does NOT emit CREATE TYPE on PostgreSQL, and a
+generated downgrade drops the column while leaving the type behind, so
+re-upgrading fails. Both were caught only by running it.
 
 Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
 than done on the Places endpoints alone, which would leave /estimate exposed
