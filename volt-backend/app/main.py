@@ -1,7 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.auth import init_firebase
@@ -42,14 +42,8 @@ app.include_router(places.router)
 
 
 @app.get("/api/v1/health")
-async def health(request: Request) -> dict[str, str]:
+async def health() -> dict[str, str]:
     """Liveness check that also proves the database is reachable."""
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
-    return {
-        "status": "ok",
-        "environment": settings.environment,
-        # TEMPORARY — remove after the XFF check
-        "xff": request.headers.get("x-forwarded-for", "none"),
-        "client": request.client.host if request.client else "none",
-    }
+    return {"status": "ok", "environment": settings.environment}
