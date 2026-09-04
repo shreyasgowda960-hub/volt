@@ -13,6 +13,7 @@ from app.models import (  # noqa: F401
     booking,
     driver,
     place_coordinate,
+    route_distance,
     user,
     vehicle_type,
 )

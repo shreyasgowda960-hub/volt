@@ -94,8 +94,9 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 Phase 3 in progress. Customer app and driver app both working on device
 (RMX3371, Android 14). Specs 011 (polling + driver details) and 012 (real
 addresses) are merged to main and live in production. Spec 013 is crash
-reporting and release signing (Part A done, Part B deferred). Distance Matrix
-moved to spec 014; rate limiting wants its own spec before that.
+reporting and release signing (Part A done, Part B deferred). Spec 014 (real
+road distance) is built on feat/road-distance. Rate limiting still wants its
+own spec.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -380,7 +381,66 @@ establishment) that is not the id that was asked for. Writing only one of
 them meant writing a key nothing would ever look up. Found by calling the
 real API — a stub that echoes back its own argument cannot show this.
 
-Fare still uses haversine x 1.4. Distance Matrix is spec 014.
+Real road distance (spec 014). Fares are priced from the Routes API, not
+haversine x 1.4.
+
+Routes API `computeRoutes`, NOT Distance Matrix — Google's own docs put that
+in "Legacy status" ("This API is now in legacy mode. Use Compute Route Matrix
+instead") and the JS DistanceMatrixService is deprecated as of 2026-02-25.
+computeRoutes rather than computeRouteMatrix because this is one origin and
+one destination. When driver matching needs "which online driver is nearest",
+that IS an N x M problem and computeRouteMatrix is the one to reach for.
+
+Two shapes worth remembering: duration comes back as a STRING with a trailing
+"s" ("1837s"), not a number; and `routingPreference: TRAFFIC_AWARE` moves the
+request from the Essentials SKU to Pro. The tier cost is deliberate — the
+duration is shown to a customer deciding whether to book, and in Bengaluru
+traffic is the dominant term in that number. One constant to change if the
+bill argues otherwise.
+
+FARES DID NOT SIMPLY RISE, which is what spec 014 predicted. Measured on five
+real Bengaluru routes (2026-09-04, midday):
+
+  Koramangala -> Whitefield      19.79km -> 17.97km   -9.2%   factor 1.27
+  Koramangala -> Hebbal          16.21km -> 14.98km   -7.6%   factor 1.29
+  Electronic City -> Whitefield  23.70km -> 29.42km  +24.1%   factor 1.74
+  Jayanagar -> Indiranagar       10.95km -> 11.85km   +8.2%   factor 1.51
+  Hebbal -> Electronic City      31.18km -> 27.36km  -12.3%   factor 1.23
+
+Mean change about +0.6% — essentially nothing. The real finding is that 1.4
+was not wrong on average, it was wrong PER ROUTE: the true factor ranges 1.23
+to 1.74. It over-charged long ring-road trips, which are efficient, and
+under-charged short central and peripheral cross-town ones by up to a
+quarter. That is a better argument for this spec than "fares rise" was — the
+flat multiplier mis-priced in both directions, worst exactly where a driver
+eats the difference.
+
+Distance is cached, duration is only cached for 15 minutes, and they come
+from one row read under two rules. The Service Specific Terms permit
+temporarily caching "latitude (lat), longitude (lng), distance, duration,
+time, and estimated time of arrival values for up to 30 consecutive calendar
+days, after which customers must delete the cached values" — a WIDER
+exemption than the Places one, which is why route_distances may hold duration
+where place_coordinates may not hold an address. Retention is 29 days for
+headroom, swept by a real throttled DELETE, same as the other two sweeps.
+
+Why not the other two cache options: serving distance from cache while always
+calling Google for duration saves ZERO requests, because one request returns
+both. And serving the 20km/h fallback duration on a hit would show the
+customer the exact fake number this spec exists to delete. A haversine result
+is never cached, or a transient outage would stick for the full TTL after it
+recovered.
+
+Graceful degradation is the point of routing.py: timeouts, non-200s, quota
+rejections, malformed bodies and unroutable pairs ALL fall back to haversine
+x 1.4 and log at WARNING, never raise. A fare service that fails closed on a
+third-party outage is worse than one that degrades. bookings.distance_source
+(google | haversine, server default haversine) records which happened, because
+otherwise a degraded hour is invisible in the data forever.
+
+road_distance_m and eta_minutes are unchanged. They are the fallback now, and
+they remain correct for the service-area radius check, which asks how far
+from the centre rather than how far to drive.
 
 Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
 than done on the Places endpoints alone, which would leave /estimate exposed
@@ -476,6 +536,36 @@ Spec 012 — real addresses:
   are all confirmed working, not just the local ones.
 - Real addresses render correctly on the driver job board, which is the one
   cross-app consequence of dropping the six hardcoded locations.
+
+## Planned, not built — pricing effort rather than geometry
+
+Recorded so they do not get lost. None of these is spec 014.
+
+The common thread: **VOLT currently prices geometry, not effort.** Distance
+is now real, but distance is still the only thing a fare depends on.
+
+1. **Time-based fare component.** `_fare_paise` takes distance_m and nothing
+   else, so a 6km trip at 11pm and the same trip at 6pm cost the same despite
+   roughly triple the driver's time. Ola, Uber and Porter all price base +
+   per-km + per-minute. Planned as a `per_minute_paise` column on
+   vehicle_types, taking duration from spec 014's RouteResult — which already
+   arrives on every call, so the input is free.
+   IMPORTANT: per-km must come DOWN when per-minute goes in, not stay put.
+   Otherwise it is a second fare rise stacked on 014 rather than a
+   redistribution of the same fare toward the trips that actually cost more.
+
+2. **Waiting charges.** Time between driver_assigned_at and picked_up_at is
+   currently unpaid driver time. Industry norm is a free window of 15-25
+   minutes then per-minute. The mechanism already exists and needs no schema
+   work: final_fare_paise is deliberately separate from quoted_fare_paise for
+   exactly this. Belongs near phase 4 payments.
+
+3. **Proximity matching.** The job board is city-wide, so a Whitefield driver
+   sees a Koramangala pickup and eats the approach unpaid. Nobody charges the
+   customer for the approach — the fix is matching by driver location, which
+   needs phase 3 live tracking. Worth naming as the real reason a driver
+   would decline distant jobs: it is a MATCHING problem, not a pricing one,
+   and adding an approach fee would be solving the wrong thing.
 
 Known gaps:
 - Lazy expiry has no scheduled sweep (see above).

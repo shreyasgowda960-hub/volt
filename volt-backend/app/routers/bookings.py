@@ -52,7 +52,9 @@ async def estimate_fare(
             detail=e.user_message,
         )
 
-    distance_m, eta, options = await estimate_all(
+    # The RouteResult is discarded here — /estimate exposes no provenance,
+    # since a quote is not a record. create_booking is where it is stored.
+    distance_m, eta, options, _route = await estimate_all(
         db,
         payload.pickup.lat,
         payload.pickup.lng,

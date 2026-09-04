@@ -3,7 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.vehicle_type import VehicleType
 from app.schemas.booking import FareOption
-from app.utils.distance import eta_minutes, road_distance_m
+from app.services.route_cache import route_cached
+from app.services.routing import RouteResult, RoutingService
 
 
 class VehicleTypeNotFound(Exception):
@@ -65,10 +66,20 @@ async def estimate_all(
     drop_lat: float,
     drop_lng: float,
     approx_weight_kg: float | None = None,
-) -> tuple[int, int, list[FareOption]]:
-    """Returns (distance_m, eta_minutes, options)."""
-    distance_m = road_distance_m(pickup_lat, pickup_lng, drop_lat, drop_lng)
-    eta = eta_minutes(distance_m)
+    routing: RoutingService | None = None,
+) -> tuple[int, int, list[FareOption], RouteResult]:
+    """Returns (distance_m, eta_minutes, options, route).
+
+    The RouteResult is returned as well as its parts so create_booking can
+    record distance_source without recomputing or re-deriving it.
+    """
+    route = await route_cached(
+        db, pickup_lat, pickup_lng, drop_lat, drop_lng, service=routing
+    )
+    distance_m = route.distance_m
+    # Rounded up so a 90-second trip reads as 2 min rather than 1, and never
+    # as 0 — the old eta_minutes had the same floor.
+    eta = max(1, round(route.duration_s / 60))
 
     vehicles = _filter_by_capacity(await load_active_vehicle_types(db), approx_weight_kg)
     options = [
@@ -82,4 +93,4 @@ async def estimate_all(
         )
         for v in vehicles
     ]
-    return distance_m, eta, options
+    return distance_m, eta, options, route
