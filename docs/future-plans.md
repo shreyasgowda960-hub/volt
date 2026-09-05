@@ -181,3 +181,86 @@ directly for both Maps and Firebase SMS.
 **What waiting costs.** Nothing today, but the exposure grows once the trial
 credit is gone: until then the credit is itself a ceiling, and afterwards
 nothing is.
+
+---
+
+## 5. SMS abuse protection → reCAPTCHA SMS defense
+
+Important before any public release. Not urgent now, and the reason it is not
+urgent is a fact about distribution rather than about the code.
+
+**What we do today.** Not configured — the reCAPTCHA site keys do not exist.
+Abuse protection is the SMS region policy alone (allowlist, India only, set
+5 Sep 2026) plus the default 1000/day sent-SMS quota. See the SMS block under
+*Auth* in `../CLAUDE.md` for the current settings.
+
+**Why it does not scale.** The region policy and reCAPTCHA stop two different
+attacks, and we only have the first:
+
+- The region policy blocks foreign numbers, which kills SMS pumping — the
+  revenue-share fraud where an attacker triggers OTPs to numbers they profit
+  from. That attack is genuinely closed.
+- It does **nothing** against a bot hammering *Indian* numbers. That is the
+  attack that matters the moment the app is publicly installable, because
+  every request is a legitimate-looking domestic verification.
+
+At $0.07 per SMS (see §2 for the source) the default 1000/day quota is about
+**$70/day**, roughly ₹6,000/day, of exposure. The quota bounds the damage; it
+does not prevent it, and it is a daily bound rather than a total one.
+
+**What replaces it.** reCAPTCHA SMS defense, alongside the region policy
+rather than instead of it — that pairing is Google's own recommendation.
+
+**Trigger.** Before public Play Store release. **Also immediately** if either
+abuse signal appears:
+- SMS volume that does not match the known tester list.
+- Verification success rate below **75%** in any region — Google names that
+  threshold as an abuse signal.
+
+Both of those require §6 to exist first. Nothing currently watches SMS volume,
+so today the second trigger cannot fire — which is the real argument for doing
+§6 before it is needed rather than after.
+
+**Rough size.** A spec, not a console change. Create reCAPTCHA site keys,
+configure in Firebase, and note the floor: Android SDK **23.1.0 or later**,
+which means checking and possibly bumping `firebase_auth` in BOTH Flutter apps.
+Spec 013 is the precedent for why that is not free — adding one Firebase
+package forced `firebase_core` up and broke `firebase_auth` compilation until
+it moved too. Misconfiguration makes sign-in FAIL FOR REAL USERS, so this needs
+on-device verification, not just a green analyzer.
+
+**What waiting costs.** Nothing structural while distribution is sideloaded
+APKs to known people. The cost arrives with public installability, not
+gradually — which is why the trigger is an event and not a number.
+
+---
+
+## 6. SMS metrics monitoring
+
+**What we do today.** Nothing watches SMS volume. Deliberate only in the sense
+that there is nothing yet to watch — the tester list is short enough that
+anomalies would be noticed by hand.
+
+**Why it does not scale.** It is not a scaling problem so much as a blind spot
+that becomes load-bearing: §5's abuse triggers are both defined in terms of
+metrics nobody is collecting. An attack would be visible only in the bill,
+after the fact.
+
+**What replaces it.** Cloud Monitoring on the metrics Google documents for
+this — sent SMS count, blocked SMS count, and phone verification count, each
+carrying a region code. The usable rule those give:
+
+> verification success rate = verification count ÷ sent count;
+> **below 75% in a region suggests abuse.**
+
+That ratio is the whole point of collecting all three rather than just volume:
+a raw spike is ambiguous — a launch looks like an attack — but a spike with a
+collapsing success rate is not.
+
+**Trigger.** When real users exist beyond the tester list.
+
+**Rough size.** Console setup, no code.
+
+**What waiting costs.** `TBD — owner decision`. Not stated, and worth deciding
+rather than assuming: the honest answer is probably "nothing, but it gates
+§5's second trigger", which makes it cheap insurance rather than free.

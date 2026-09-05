@@ -164,6 +164,20 @@ Both apps' google-services.json IS tracked, deliberately: client identifiers,
 not secrets — they ship inside every compiled APK, and ignoring the file
 breaks a fresh clone's build. Don't re-add an ignore rule for it.
 
+SMS, as configured today. Phone sign-in is enabled for REAL numbers, so every
+OTP is a billed message, not a test code:
+- SMS region policy: ALLOWLIST, India only, set 5 Sep 2026. This is the whole
+  of our SMS abuse protection right now.
+- India SMS is $0.07 per message (Google Identity Platform pricing, confirmed
+  5 Sep 2026).
+- Default sent-SMS quota is 1000/day, which at that rate is about $70/day of
+  exposure.
+- reCAPTCHA SMS defense is NOT configured; the site keys do not exist. The
+  region policy stops foreign-number SMS pumping but nothing stops a bot
+  hammering Indian numbers. That is fine while distribution is sideloaded
+  APKs to known people and must be fixed before any public release — see
+  docs/future-plans.md.
+
 Deployed: backend live at https://volt-api-951s.onrender.com (Render free
 plan). Pushing to main auto-deploys to production, ~2 min. Render's free
 Postgres expires ~30 days after creation (created 2026-08-08) — check the
