@@ -730,35 +730,16 @@ Spec 012 — real addresses:
 - Real addresses render correctly on the driver job board, which is the one
   cross-app consequence of dropping the six hardcoded locations.
 
-## Planned, not built — pricing effort rather than geometry
+## Planned, not built
 
-Recorded so they do not get lost. None of these is spec 014.
+Moved to docs/future-plans.md on 5 Sep 2026 — deferred decisions live there
+now, each with a trigger, so this file can stay conventions and current state.
 
-The common thread: **VOLT currently prices geometry, not effort.** Distance
-is now real, but distance is still the only thing a fare depends on.
-
-1. **Time-based fare component.** `_fare_paise` takes distance_m and nothing
-   else, so a 6km trip at 11pm and the same trip at 6pm cost the same despite
-   roughly triple the driver's time. Ola, Uber and Porter all price base +
-   per-km + per-minute. Planned as a `per_minute_paise` column on
-   vehicle_types, taking duration from spec 014's RouteResult — which already
-   arrives on every call, so the input is free.
-   IMPORTANT: per-km must come DOWN when per-minute goes in, not stay put.
-   Otherwise it is a second fare rise stacked on 014 rather than a
-   redistribution of the same fare toward the trips that actually cost more.
-
-2. **Waiting charges.** Time between driver_assigned_at and picked_up_at is
-   currently unpaid driver time. Industry norm is a free window of 15-25
-   minutes then per-minute. The mechanism already exists and needs no schema
-   work: final_fare_paise is deliberately separate from quoted_fare_paise for
-   exactly this. Belongs near phase 4 payments.
-
-3. **Proximity matching.** The job board is city-wide, so a Whitefield driver
-   sees a Koramangala pickup and eats the approach unpaid. Nobody charges the
-   customer for the approach — the fix is matching by driver location, which
-   needs phase 3 live tracking. Worth naming as the real reason a driver
-   would decline distant jobs: it is a MATCHING problem, not a pricing one,
-   and adding an approach fee would be solving the wrong thing.
+**VOLT prices geometry, not effort.** That is the one line worth keeping here,
+because it is a property of the system as it stands today rather than a plan:
+spec 014 made distance real, but distance is still the only thing a fare
+depends on. Its three consequences — a time-based fare component, waiting
+charges, and proximity matching — are future-plans §7, §8 and §9.
 
 Known gaps:
 - THE APP CANNOT FUNCTION WITHOUT GOOGLE. Found on device 5 Sep 2026 by
@@ -793,7 +774,9 @@ Known gaps:
   two facts belong together.
   Revisit when spend cap enforcement leaves Preview and can be scoped to Maps
   Platform alone.
-- Lazy expiry has no scheduled sweep (see above).
+- Lazy expiry has no scheduled sweep, so expiry is driven by traffic rather
+  than by time (see Expiry above for the mechanism). Moved to
+  docs/future-plans.md §10 — it was a deferral with no observable trigger.
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config. This is spec 013 Part B, and it
   is DEFERRED on purpose rather than pending:

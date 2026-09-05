@@ -264,3 +264,137 @@ collapsing success rate is not.
 **What waiting costs.** `TBD — owner decision`. Not stated, and worth deciding
 rather than assuming: the honest answer is probably "nothing, but it gates
 §5's second trigger", which makes it cheap insurance rather than free.
+
+---
+
+## 7. Fare model: distance only → a time component
+
+Moved here from `../CLAUDE.md` on 5 Sep 2026, along with §8 and §9. They were
+recorded there as "planned, not built", which is this file's job.
+
+**The common thread across §7, §8 and §9: VOLT prices geometry, not effort.**
+Spec 014 made distance real, but distance is still the *only* thing a fare
+depends on. Each of the three is a different consequence of that.
+
+**What we do today.** `_fare_paise` takes `distance_m` and nothing else. A 6km
+trip at 11pm and the same trip at 6pm cost the same, despite roughly triple the
+driver's time. Deliberate — it was the simplest model that priced anything at
+all — and now the largest known gap between what a fare charges and what a trip
+costs the person driving it.
+
+**Why it does not scale.** The mis-pricing is systematic, not random: it always
+favours the customer on slow trips and always penalises the driver, and slow
+trips are exactly the ones a driver can least afford to take. Ola, Uber and
+Porter all price base + per-km + per-minute, which is the market telling us the
+same thing. Note that spec 014 already fixed the *other* half of this — the
+flat 1.4 multiplier mis-priced per route in both directions — so this is the
+remaining term, not a repeat.
+
+**What replaces it.** A `per_minute_paise` column on `vehicle_types`, with
+duration taken from spec 014's `RouteResult`, which already arrives on every
+call — so the input is free and needs no new API request.
+
+**IMPORTANT: per-km must come DOWN when per-minute goes in, not stay put.**
+Otherwise this is a second fare rise stacked on 014 rather than a
+redistribution of the same fare toward the trips that actually cost more. That
+distinction is the whole point, and it is the easiest thing to lose when the
+change is finally made.
+
+**Trigger.** `TBD — owner decision`.
+
+**Rough size.** `TBD — owner decision`. What is known: a migration for the new
+column, a change to `_fare_paise`, and no new data source. Both apps display
+fares from the server, so neither should need changing.
+
+**What waiting costs.** `TBD — owner decision`. Worth noting that fares are
+snapshotted per booking, so no past booking is rewritten whenever this lands.
+
+---
+
+## 8. Waiting charges
+
+**What we do today.** The time between `driver_assigned_at` and `picked_up_at`
+is unpaid driver time. Nothing measures it and nothing charges for it.
+
+**Why it does not scale.** Same thread as §7 — the driver absorbs the cost of
+time. Industry norm is a free window of 15–25 minutes, then per-minute.
+
+**What replaces it.** Per-minute charging after a free window. **No schema work
+is needed:** `final_fare_paise` is already deliberately separate from
+`quoted_fare_paise` for exactly this, and both timestamps are already recorded.
+
+**Trigger.** `TBD — owner decision`. Dependency rather than trigger: it belongs
+near phase 4 payments, since it is the first thing that makes the final fare
+differ from the quote in a way a customer has to be shown and asked to pay.
+
+**Rough size.** `TBD — owner decision`. Smaller than §7 — the data model
+already anticipates it.
+
+**What waiting costs.** `TBD — owner decision`.
+
+---
+
+## 9. Job board → proximity matching
+
+Not a pricing change, despite sitting between two of them. Recorded here
+because the *symptom* looks like pricing and the fix is not.
+
+**What we do today.** The job board is city-wide: every online driver with a
+matching vehicle type sees every unclaimed booking, first to accept wins. See
+*Matching* in `../CLAUDE.md`.
+
+**Why it does not scale.** A Whitefield driver sees a Koramangala pickup and
+eats the approach unpaid. **That is the real reason a driver declines distant
+jobs**, and it is worth naming precisely, because the obvious-looking fix is
+the wrong one: nobody charges the customer for the approach. Adding an approach
+fee would be solving a matching problem with pricing, and would make the
+product worse in the process.
+
+**What replaces it.** Matching by driver location.
+
+**Trigger.** `TBD — owner decision`. Dependency rather than trigger: it needs
+phase 3 live location tracking, which does not exist yet.
+
+**Rough size.** `TBD — owner decision`.
+
+**What waiting costs.** `TBD — owner decision`.
+
+---
+
+## 10. Lazy expiry → a scheduled sweep
+
+Moved here from `../CLAUDE.md` Known gaps on 5 Sep 2026. It was labelled there
+as "known debt — replace once there's real traffic to justify it", which is a
+deferral without an observable trigger: exactly the shape this file exists to
+give a trigger to.
+
+**What we do today.** `expire_stale_bookings()` runs lazily at the top of three
+read endpoints, throttled to at most once per 60s per process. Deliberate, and
+it solved a real problem — polling had every open screen dragging a write
+transaction behind every request. See *Expiry* in `../CLAUDE.md` for the
+throttle and the partial index that serves its predicate.
+
+**Why it does not scale.** The mechanism is that expiry is driven by *traffic*
+rather than by *time*. The effective window is "5 minutes plus however long
+until the next request", so with no traffic nothing expires at all. Already
+observed in real data: three bookings created minutes apart came back with the
+same `expired_at`, because nothing hit the API in between and one sweep caught
+all three. It degrades in the quiet direction — the fewer users, the more wrong
+the expiry time — which is the opposite of most scaling problems and easy to
+misjudge.
+
+**What replaces it.** A scheduled job running the same UPDATE on a timer,
+independent of request traffic.
+
+**Trigger.** `TBD — owner decision`. The existing wording, "once there's real
+traffic to justify it", is not an observable condition — and note it points the
+wrong way: more traffic makes lazy expiry *more* accurate, not less. A
+defensible trigger would be about correctness rather than load, e.g. the first
+time an expiry timestamp being late actually matters to a customer or a driver.
+
+**Rough size.** `TBD — owner decision`. The query and its index already exist;
+what is missing is somewhere to run it from, which Render's free plan does not
+provide.
+
+**What waiting costs.** `TBD — owner decision`. Nothing structural — the sweep
+is idempotent and the throttle is per-process by design.
