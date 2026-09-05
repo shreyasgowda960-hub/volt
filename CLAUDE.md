@@ -450,6 +450,16 @@ third-party outage is worse than one that degrades. bookings.distance_source
 (google | haversine, server default haversine) records which happened, because
 otherwise a degraded hour is invisible in the data forever.
 
+BUT THE DEGRADATION ONLY COVERS THE LAST STEP, and that is worth being honest
+about because it undercuts the premise above. Verified on device 5 Sep 2026
+with a deliberately invalid key: a customer cannot enter an address at all
+during a Google outage. Autocomplete 502s, and dropping a pin fails too,
+because reverse geocoding is also a Google call. There is no address-entry
+path that degrades — no recents, no saved addresses, no free-text fallback.
+So routing.py fails open onto a fare nobody can ever reach: everything
+upstream of the fare fails closed, and a Google outage means nobody books.
+Phase-4 problem, not a today problem, but see Known gaps.
+
 road_distance_m and eta_minutes are unchanged. They are the fallback now, and
 they remain correct for the service-area radius check, which asks how far
 from the centre rather than how far to drive.
@@ -682,6 +692,17 @@ is now real, but distance is still the only thing a fare depends on.
    and adding an approach fee would be solving the wrong thing.
 
 Known gaps:
+- THE APP CANNOT FUNCTION WITHOUT GOOGLE. Verified on device 5 Sep 2026 with
+  an invalid key: autocomplete 502s, and dropping a pin fails too because
+  reverse geocoding is also a Google call. No address-entry path degrades, so
+  a Google outage means nobody can book at all — not "books at a worse fare",
+  nobody books. Spec 014 made FARES fall back gracefully, and that is still
+  true, but it turns out the degradation only covers the last step while
+  everything upstream of it fails closed. Phase 4, not today, and the fix is
+  a booking flow that survives without live geocoding — saved and recent
+  addresses, a free-text fallback, a pin drop that yields coordinates without
+  needing a name for them. Recorded because 014's whole premise was graceful
+  degradation and this is the limit of it.
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config. This is spec 013 Part B, and it

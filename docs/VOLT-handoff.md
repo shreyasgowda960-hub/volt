@@ -377,6 +377,46 @@ commit message, an AndroidManifest grep matching a comment explaining why the
 permission is absent, and `grep -qU $'\x00'` matching every file because bash
 cannot hold a NUL.
 
+### A seventh lesson, and a repeat offender
+
+**A fixture that only produces well-formed input cannot find a parsing bug.**
+This is the same family as the five above — the fixture and the thing it is
+supposed to distinguish are indistinguishable — but it deserves naming
+separately, because the missing case is not a wrong *value*, it is a whole
+*shape* of input that the fixture never generates.
+
+`volt-backend/tests/test_rate_limit.py` has now produced **three defects of
+exactly this shape**, which is why it is worth writing down rather than
+filing as bad luck:
+
+1. **Single-entry proxy chains.** Every test sent
+   `X-Forwarded-For: <one address>`, where the first and last entry are the
+   same. The limiter was keying on the last entry, which in production is
+   Render's proxy and identical for every caller — one global 20/min bucket
+   for the whole country. The suite was green. Found by measuring the real
+   chain against production, not by any test.
+2. **Documentation-range addresses.** The tests used `203.0.113.0/24`, which
+   `ipaddress` classifies as reserved. Once a "must be a global address"
+   guard existed, every test would have silently exercised the fallback path
+   instead of the real one — a broken resolver would still have passed.
+   Caught before it landed, but only because the guard was written the same
+   day.
+3. **Well-formed chains only.** No test ever sent a malformed header, so
+   nothing covered `X-Forwarded-For: ","` — truthy, but filtering to zero
+   entries, so it fell through to `parts[0]` and raised IndexError. A 500 on
+   a public endpoint from a header any caller can set. Found by an audit
+   subagent probing `' , , '`, not by the suite.
+
+The habit: **for any function that parses caller-supplied input, write the
+malformed cases before the well-formed ones.** Empty, separators-only,
+wrong type, too short, too long, non-ASCII, and absurdly large. The
+well-formed case is the one you will think of anyway.
+
+Done for `client_ip`: 37 malformed headers were thrown at it in one probe and
+the surviving cases became parametrized tests. Nothing raises now. Worth
+repeating for anything else that reads a header, a query param, or a Google
+response body.
+
 ---
 
 ## Working practices

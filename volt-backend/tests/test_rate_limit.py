@@ -298,18 +298,43 @@ def test_normal_chain_does_not_trigger_the_guard(caplog):
 @pytest.mark.parametrize(
     "reserved",
     [
+        # --- reserved ranges: an added internal hop ------------------------
         "fd00::1",  # unique local (IPv6 private)
         "fe80::1",  # link-local
         "::1",  # loopback
         "10.199.202.132",  # IPv4 private
         "127.0.0.1",  # IPv4 loopback
         "169.254.1.1",  # IPv4 link-local
-        "not-an-ip-address",  # obfuscated identifier or junk
+        "2001:db8::1",  # IPv6 documentation range
+        # --- not addresses at all: malformed or obfuscated -----------------
+        # Everything below arrives from a real client or a misbehaving proxy
+        # rather than from a topology change, and none of it may raise.
+        "not-an-ip-address",
+        "unknown",  # RFC 7239 permits this literal token
+        "_hidden",  # RFC 7239 obfuscated identifier
+        "proxy.example.com",  # a hostname, not an address
+        "1.2.3.4:5678",  # v4 with a port
+        "[2001:db8::1]:443",  # v6 bracketed with a port
+        "010.1.1.1",  # leading zeros: rejected since Python 3.9
+        "0x7f.0.0.1",  # hex octet
+        "1.2.3",  # too few octets
+        "1.2.3.4.5",  # too many octets
+        "-1.2.3.4",  # negative octet
+        "999999999999999999999",  # bare huge integer
+        "9" * 2000,  # absurdly long single entry
+        "१०६.२२",  # non-ASCII digits
+        "106.222.200.144​",  # a real address with a zero-width space
     ],
 )
 def test_guard_fires_on_every_reserved_range(reserved, caplog):
     """IPv6 included: an internal hop is as likely to be fd00::/8 as 10/8,
-    and a v4-only check would pass it straight through."""
+    and a v4-only check would pass it straight through.
+
+    The malformed half of this list is not about topology at all — it is
+    parsing. ipaddress.ip_address raises ValueError on every one of them, and
+    an uncaught ValueError here would 500 a public endpoint on input a caller
+    fully controls.
+    """
     # Five entries, so index -3 is the parametrized one. Four would put -3 on
     # Cloudflare instead — the single-added-hop blind spot recorded above.
     chain = (
@@ -319,6 +344,51 @@ def test_guard_fires_on_every_reserved_range(reserved, caplog):
         assert client_ip(_FakeRequest({"x-forwarded-for": chain})) == "106.222.200.144"
 
     assert len(caplog.records) == 1
+
+
+@pytest.mark.parametrize(
+    "header",
+    [",", " , , ", ",,,", " ", "", "\t", ",".join([" "] * 300)],
+)
+def test_separator_only_header_falls_back_to_the_peer(header, caplog):
+    """A header of nothing but separators is TRUTHY but yields no entries.
+
+    That combination used to sail past a `not forwarded` gate and reach
+    parts[0] at the bottom of client_ip, raising IndexError — a 500 on a
+    public endpoint, from a header any caller can send. It is now handled by
+    the same branch as a missing header: the peer socket, and no warning,
+    because a malformed header is not evidence the topology changed.
+    """
+    with caplog.at_level(logging.WARNING, logger="app.services.rate_limit"):
+        request = _FakeRequest(
+            {"x-forwarded-for": header}, client=_Peer("198.51.100.9")
+        )
+        assert client_ip(request) == "198.51.100.9"
+
+    assert caplog.records == []
+
+
+def test_blank_entries_between_real_ones_are_ignored():
+    """Blanks are filtered before indexing, so they cannot shift -3.
+
+    This matters because a client CAN inject them: anything it prepends is
+    followed by the three real hops, so filtering has to leave the tail
+    alignment intact.
+    """
+    padded = f" , {'106.222.200.144'}, , {_CLOUDFLARE}, , {_RENDER_INTERNAL}, "
+    assert client_ip(_FakeRequest({"x-forwarded-for": padded})) == "106.222.200.144"
+
+
+@pytest.mark.parametrize("depth", [50, 300, 1000])
+def test_a_long_prepended_chain_still_resolves_to_the_client(depth):
+    """Counting from the right is supposed to be indifferent to chain length.
+
+    A client can prepend as many entries as the HTTP layer's header size
+    limit allows; none of them may move the resolved address or cost anything
+    that scales badly.
+    """
+    chain = ", ".join(["1.2.3.4"] * depth + ["106.222.200.144", _CLOUDFLARE, _RENDER_INTERNAL])
+    assert client_ip(_FakeRequest({"x-forwarded-for": chain})) == "106.222.200.144"
 
 
 @pytest.mark.asyncio

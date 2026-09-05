@@ -232,13 +232,23 @@ def client_ip(request: Request) -> str:
         the chain after any infrastructure change.
     """
     forwarded = request.headers.get("x-forwarded-for")
-    if not forwarded:
-        # No proxy in front at all: local development, or the test suite.
-        # Not a topology change, so not worth a warning — the peer socket is
-        # genuinely the client here.
-        return request.client.host if request.client else "unknown"
+    parts = [p.strip() for p in (forwarded or "").split(",") if p.strip()]
 
-    parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+    if not parts:
+        # Two cases, one branch. No header at all: local development or the
+        # test suite, where the peer socket genuinely is the client. Or a
+        # header carrying nothing but separators — "," or " , , " — which is
+        # truthy but yields no entries once blanks are filtered out.
+        #
+        # The second case is why this is a `not parts` check rather than the
+        # `not forwarded` it used to be: a separators-only header sailed past
+        # the truthiness gate and reached parts[0] at the bottom of this
+        # function, raising IndexError and 500-ing a public endpoint on
+        # attacker-controlled input.
+        #
+        # No warning on either: a missing header is the normal local shape,
+        # and a malformed one is not evidence that the topology changed.
+        return request.client.host if request.client else "unknown"
 
     if len(parts) >= _TRUSTED_HOPS:
         resolved = parts[-_TRUSTED_HOPS]
