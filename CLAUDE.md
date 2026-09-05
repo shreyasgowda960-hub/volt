@@ -89,6 +89,20 @@ volt/
 ```
 Flutter folders use underscores because Dart package names cannot contain hyphens.
 
+Docs split three ways, and the split matters because the wrong home means the
+knowledge is not found when it is needed:
+- `docs/specs/` — decisions already made AND implemented, numbered, each
+  recording why.
+- `docs/future-plans.md` — decisions deliberately DEFERRED, each with the
+  observable trigger that says start this now. A thing that is correct today
+  and wrong at scale belongs here the moment it is decided, not when it starts
+  hurting: the whole failure mode is that the trigger passes unnoticed.
+- `docs/VOLT-handoff.md` — today's status: in flight, blocked, next.
+
+If you defer something because it is fine at this size, add it to
+future-plans.md in the same session. Otherwise it lives only in a chat log that
+gets cleared.
+
 
 ## Current state — keep this updated
 Phase 3 in progress. Customer app and driver app both working on device

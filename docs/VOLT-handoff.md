@@ -4,8 +4,14 @@ Porter-style on-demand logistics for Bengaluru. Customer app, driver app,
 FastAPI backend, PostgreSQL. Solo founder, final-year CE student, small team of
 friends helping.
 
-Read this with `CLAUDE.md` (conventions + current state) and `docs/specs/`
-(numbered specs, each recording *why*).
+Read this with `CLAUDE.md` (conventions + current state), `docs/specs/`
+(numbered specs, each recording *why*), and `docs/future-plans.md`.
+
+That last one is the newest and the easiest to forget: it holds decisions that
+are **correct now and wrong at scale**, each with the observable trigger that
+says when to change them. This file is today's status; that one is the list of
+things that will stop being fine, and what to watch for. If you defer something
+because it is fine at this size, it goes there in the same session.
 
 ---
 
