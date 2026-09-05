@@ -95,8 +95,11 @@ Phase 3 in progress. Customer app and driver app both working on device
 (RMX3371, Android 14). Specs 011 (polling + driver details) and 012 (real
 addresses) are merged to main and live in production. Spec 013 is crash
 reporting and release signing (Part A done, Part B deferred). Spec 014 (real
-road distance) is built on feat/road-distance. Rate limiting still wants its
-own spec.
+road distance) merged to main and deployed 5 Sep 2026 — production now prices
+from the Routes API, and the minimal per-IP rate limit on /estimate went live
+with it. Not yet verified against production: confirm a real booking comes
+back distance_source=google, because a silently degraded deploy still returns
+a plausible fare. Rate limiting beyond /estimate still wants its own spec.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.

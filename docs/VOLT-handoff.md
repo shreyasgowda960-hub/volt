@@ -13,17 +13,28 @@ Read this with `CLAUDE.md` (conventions + current state) and `docs/specs/`
 
 | | |
 |---|---|
-| Branch | `feat/road-distance` |
-| Head | `9c8ab9b` feat(backend): real road distance from the Routes API — spec 014 |
-| vs `origin/main` | **1 commit ahead, unpushed** |
-| Working tree | clean, except this file |
-| Backend tests | 154 passing |
+| Branch | `main` |
+| `origin/main` | `dbe8cc6` Merge branch 'feat/road-distance' — **pushed, so deployed** |
+| Unpushed | docs commits only |
+| Working tree | clean |
+| Backend tests | 194 passing |
 | Flutter | `volt_core` 8 tests; all three packages analyze clean |
-| Migration head | `afbcf9152650` (applied locally, **not** in production) |
+| Migration head | `afbcf9152650` (`bookings.distance_source`) — **now in production** |
 
-**`main` is at `41a19c2`** and includes everything through spec 013 Part A.
-Pushing `main` auto-deploys, so spec 014's two schema changes reach production
-the moment this branch merges.
+**SPEC 014 IS LIVE.** `feat/road-distance` was merged into `main` and pushed on
+5 Sep 2026, and pushing `main` auto-deploys, so all of it is in production:
+real Routes API distances, the haversine fallback, `distance_source`, and the
+per-IP rate limit on `/estimate`. The migration ran with the deploy.
+
+That makes two things live that had only ever run locally, and both are worth
+watching in the logs rather than assuming:
+- Every fare estimate and every booking is now a real, billable Pro-tier
+  Routes request against the deployed key, whose restrictions and quota caps
+  have never been exercised for Routes (only for Places, in spec 012).
+- `client_ip` is now resolving real X-Forwarded-For chains. The measured
+  three-hop shape came from production, but a WARNING or ERROR from
+  `app.services.rate_limit` means the topology moved and the limiter is no
+  longer per-IP. Grep for it.
 
 **THIS FILE IS UNTRACKED.** `git status` shows `?? docs/specs/VOLT-handoff.md`.
 It is the one artifact of the last two sessions that is not in version
@@ -86,11 +97,11 @@ error translation, auth repositories and providers, theme, `AppConfig`,
 
 ## Half-built / in flight
 
-**Spec 014 — real road distance.** Complete on branch `feat/road-distance`,
-**not merged**. Google Routes API `computeRoutes`, `TRAFFIC_AWARE`, with a
-haversine fallback. **No cache** — see the closed question below; one was
-built and then removed for licence reasons. On-device verification is now
-done; **merge and deploy is the only thing left**:
+**Spec 014 — real road distance.** MERGED AND DEPLOYED 5 Sep 2026. Google
+Routes API `computeRoutes`, `TRAFFIC_AWARE`, with a haversine fallback. **No
+cache** — see the closed question below; one was built and then removed for
+licence reasons. Both remaining items are now done or superseded, but one
+piece of verification never happened:
 
 1. ~~Step C row 5 and the on-device fare comparison.~~ **DONE 5 Sep 2026.**
    Koramangala → Whitefield on a Bike, local backend over LAN: ₹154 with
@@ -101,12 +112,19 @@ done; **merge and deploy is the only thing left**:
    the ₹172 matches the 09-04 haversine figure exactly, and the ₹154 implies
    a route about half a kilometre shorter than 09-04 measured, which is
    TRAFFIC_AWARE on a different day rather than a fault.
-2. Merge and deploy. **One** migration rides along: `afbcf9152650`
-   (`bookings.distance_source`). Additive and safe on the live table.
-   Then RE-VERIFY AGAINST PRODUCTION: everything above ran against a local
-   server on the branch, so the deployed key's restrictions and quota caps
-   are still unproven for the Routes API. Spec 012 was re-run post-merge for
-   exactly this reason; 014 has not been.
+2. ~~Merge and deploy.~~ **DONE.** `dbe8cc6` is on `origin/main`, so the
+   migration `afbcf9152650` (`bookings.distance_source`) ran with the deploy.
+
+3. **STILL OUTSTANDING — verify against production.** Everything in item 1
+   ran against a LOCAL server on the branch. The deployed key's restrictions
+   and quota caps have never been exercised for the Routes API, only for
+   Places back in spec 012 — and 012 was deliberately re-run post-merge for
+   exactly this reason. 014 has not been. Concretely: pull one fare estimate
+   from the production app and confirm `distance_source` on the resulting
+   booking is `google` and not `haversine`. A silently degraded production —
+   valid key, wrong API restriction, so every route quietly falls back — is
+   invisible from the outside, because a haversine fare still looks like a
+   fare. That is precisely why `distance_source` exists.
 
 Because there is no cache, a booking costs **two** live Routes requests — one
 to estimate, one for create_booking's server-side recompute — both on the Pro
