@@ -703,6 +703,27 @@ Known gaps:
   addresses, a free-text fallback, a pin drop that yields coordinates without
   needing a name for them. Recorded because 014's whole premise was graceful
   degradation and this is the limit of it.
+- THERE IS NO HARD CAP ON GOOGLE MAPS SPEND. Verified in the console 5 Sep
+  2026. Routes API quotas are all marked "Adjustable: No" and the per-day
+  quota is Unlimited; the only limit is 3,000 per minute, which bounds RATE,
+  not SPEND — a month of sustained abuse never trips it. Google Cloud budgets
+  do offer "Spend cap enforcement", but it is in Preview, applies only to a
+  limited set of services which may not include Maps Platform, and is scoped
+  to ALL projects and ALL services — so enabling it risks pausing Firebase
+  auth and everything else rather than just Routes. Left on alerts-only
+  deliberately; a cap that takes down phone login to save ₹500 is worse than
+  the bill.
+  Current protections, in the order they stop mattering:
+    1. The free trial credit ceiling — expires 3 Dec 2026.
+    2. A ₹500 monthly budget with alerts at 50/90/100%. Alerts, not caps:
+       they notify, they do not stop anything.
+    3. The per-IP rate limit on /estimate (20/min).
+  AFTER 3 DEC 2026 THE FIRST DISAPPEARS, which promotes the rate limit from a
+  nice-to-have to the effective ceiling on spend — while it is still an
+  in-process counter that silently stops working on a second instance. Those
+  two facts belong together.
+  Revisit when spend cap enforcement leaves Preview and can be scoped to Maps
+  Platform alone.
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config. This is spec 013 Part B, and it
