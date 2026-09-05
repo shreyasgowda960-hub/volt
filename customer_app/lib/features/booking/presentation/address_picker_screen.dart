@@ -450,34 +450,45 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
             // One field for both modes. See the class doc.
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                // Autofocus only in search mode: in map mode the customer
-                // came to move a pin, and a keyboard covering the map is in
-                // the way.
-                autofocus: _mode == _Mode.search,
-                textInputAction: TextInputAction.search,
-                onChanged: _onQueryChanged,
-                decoration: InputDecoration(
-                  hintText: _mode == _Mode.search
-                      ? 'Search for an address or landmark'
-                      : 'Search to move the map',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _searching
-                      ? const Padding(
-                          padding: EdgeInsets.all(14),
-                          child: SizedBox(
-                            height: 18,
-                            width: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        )
-                      : _searchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              icon: const Icon(Icons.close),
-                              onPressed: _dismissSuggestions,
+              // A raised white field rather than the app's sunken grey one.
+              // This search sits over a map, where a recessed control reads as
+              // part of the map rather than as the thing you type into.
+              child: Material(
+                elevation: 2,
+                shadowColor: AppColors.navy.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                child: TextField(
+                  controller: _searchController,
+                  // Autofocus only in search mode: in map mode the customer
+                  // came to move a pin, and a keyboard covering the map is in
+                  // the way.
+                  autofocus: _mode == _Mode.search,
+                  textInputAction: TextInputAction.search,
+                  onChanged: _onQueryChanged,
+                  style: const TextStyle(fontSize: 15),
+                  decoration: InputDecoration(
+                    hintText: _mode == _Mode.search
+                        ? 'Search for an address or landmark'
+                        : 'Search to move the map',
+                    // Overrides the app-wide sunken fill for this one field.
+                    fillColor: AppColors.surface,
+                    prefixIcon: const Icon(Icons.search, color: AppColors.navy),
+                    suffixIcon: _searching
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              height: 18,
+                              width: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             ),
+                          )
+                        : _searchController.text.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.close),
+                                onPressed: _dismissSuggestions,
+                              ),
+                  ),
                 ),
               ),
             ),
@@ -526,22 +537,57 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
                   if (showSuggestions)
                     Positioned.fill(
                       child: ColoredBox(
-                        color: Theme.of(context).scaffoldBackgroundColor,
+                        color: AppColors.surface,
                         child: ListView.separated(
+                          padding: EdgeInsets.zero,
                           itemCount: _suggestions.length,
-                          separatorBuilder: (_, _) => const Divider(height: 1),
+                          separatorBuilder: (_, _) => const Divider(
+                            height: 1,
+                            indent: 68,
+                          ),
                           itemBuilder: (context, i) {
                             final suggestion = _suggestions[i];
                             return ListTile(
-                              leading: const Icon(Icons.location_on_outlined,
-                                  color: AppColors.navy),
-                              title: Text(suggestion.title),
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 4,
+                              ),
+                              // The glyph in a soft chip rather than bare on
+                              // the surface: it gives the row a left edge to
+                              // align to, which is what makes a list scannable
+                              // rather than just legible.
+                              leading: Container(
+                                height: 36,
+                                width: 36,
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceSunken,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.location_on_outlined,
+                                  size: 19,
+                                  color: AppColors.navy,
+                                ),
+                              ),
+                              title: Text(
+                                suggestion.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 15,
+                                ),
+                              ),
                               subtitle: suggestion.secondaryText.isEmpty
                                   ? null
                                   : Text(
                                       suggestion.secondaryText,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 12.5,
+                                        color: AppColors.textSecondary,
+                                      ),
                                     ),
                               // Disabled while a selection resolves, so a
                               // second tap cannot fire a second Place
@@ -600,15 +646,7 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
               // A fixed pin over a moving map, rather than a draggable
               // marker. Standard pattern, and it avoids the fiddliness of
               // grabbing a small target with a thumb.
-              const IgnorePointer(
-                child: Padding(
-                  // Nudged up by half the icon so the point, not the centre
-                  // of the glyph, sits on the map centre.
-                  padding: EdgeInsets.only(bottom: 36),
-                  child:
-                      Icon(Icons.location_on, size: 44, color: AppColors.navy),
-                ),
-              ),
+              const IgnorePointer(child: _MapPin()),
               // Our own button rather than the SDK myLocationButton, which is
               // wired to myLocationEnabled and would trigger the permission
               // prompt on screen open.
@@ -618,6 +656,13 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
                 child: FloatingActionButton.small(
                   heroTag: 'use-current-location',
                   tooltip: 'Use my current location',
+                  // White with a navy glyph, not the theme's amber. Amber is
+                  // the primary-action colour and the primary action here is
+                  // Confirm, in the sheet below — this button only moves the
+                  // map, so it must not compete with it.
+                  backgroundColor: AppColors.surface,
+                  foregroundColor: AppColors.navy,
+                  elevation: 3,
                   onPressed: _locating ? null : _useCurrentLocation,
                   child: _locating
                       ? const SizedBox(
@@ -642,6 +687,67 @@ class _AddressPickerScreenState extends ConsumerState<AddressPickerScreen> {
   }
 }
 
+/// The centre-of-map pin: a marker standing on a ground shadow.
+///
+/// The shadow matters more than it looks. A flat glyph gives no cue about
+/// WHICH pixel is being selected, so the customer aims with the middle of the
+/// icon and lands ~20dp north of where they meant. The dot on the ground is
+/// the actual target, and the stem says the head is floating above it.
+class _MapPin extends StatelessWidget {
+  const _MapPin();
+
+  // Head + stem + shadow. See the padding note in build().
+  static const _head = 40.0;
+  static const _stem = 12.0;
+  static const _shadow = 6.0;
+
+  @override
+  Widget build(BuildContext context) {
+    const contentHeight = _head + _stem + _shadow;
+    // The ground dot's centre must land on the map centre, not the widget's.
+    // In a centre-aligned Stack, bottom padding P lifts the content by P/2,
+    // so P is twice the distance from the widget's centre to the dot's.
+    const lift = ((_head + _stem + _shadow / 2) - contentHeight / 2) * 2;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: lift),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            height: _head,
+            width: _head,
+            decoration: BoxDecoration(
+              color: AppColors.navy,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 3),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.navy.withValues(alpha: 0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            // The mark's own bolt, so the pin belongs to this app rather than
+            // being Material's generic teardrop.
+            child: const Icon(Icons.bolt, color: AppColors.primary, size: 22),
+          ),
+          Container(width: 2, height: _stem, color: AppColors.navy),
+          Container(
+            height: _shadow,
+            width: _shadow * 2,
+            decoration: BoxDecoration(
+              color: AppColors.navy.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.all(Radius.elliptical(_shadow, _shadow / 2)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PinnedAddressBar extends StatelessWidget {
   const _PinnedAddressBar({
     required this.place,
@@ -659,16 +765,37 @@ class _PinnedAddressBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final pinned = place;
 
+    // A sheet lifted off the map, not a strip welded to the bottom of it.
+    // Rounded top corners and a shadow say the map continues underneath,
+    // which is what the customer is about to go back and adjust.
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
       decoration: BoxDecoration(
-        color: Theme.of(context).scaffoldBackgroundColor,
-        border: const Border(top: BorderSide(color: AppColors.border)),
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.navy.withValues(alpha: 0.16),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
+          const Text(
+            'SELECTED LOCATION',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.1,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 8),
           if (geocoding)
             const Row(
               children: [
@@ -683,12 +810,21 @@ class _PinnedAddressBar extends StatelessWidget {
               ],
             )
           else if (pinned != null)
-            Text(pinned.address,
-                style: const TextStyle(fontWeight: FontWeight.w500))
+            Text(
+              pinned.address,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+                height: 1.35,
+                color: AppColors.textPrimary,
+              ),
+            )
           else
             const Text('Move the map to place the pin',
                 style: TextStyle(color: AppColors.textSecondary)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
             child: FilledButton(
