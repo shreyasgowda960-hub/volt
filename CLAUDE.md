@@ -94,8 +94,9 @@ Flutter folders use underscores because Dart package names cannot contain hyphen
 Phase 3 in progress. Customer app and driver app both working on device
 (RMX3371, Android 14). Specs 011 (polling + driver details) and 012 (real
 addresses) are merged to main and live in production. Spec 013 is crash
-reporting and release signing (Part A done, Part B deferred). Distance Matrix
-moved to spec 014; rate limiting wants its own spec before that.
+reporting and release signing (Part A done, Part B deferred). Spec 014 (real
+road distance) is built on feat/road-distance. Rate limiting still wants its
+own spec.
 Built: phone entry → OTP → booking home → vehicle select → real booking status.
 Riverpod 3.4.2, Notifier pattern only (StateProvider is deprecated in v3).
 Auth is real Firebase phone OTP (FirebaseAuthRepository) as of spec 005.
@@ -380,14 +381,197 @@ establishment) that is not the id that was asked for. Writing only one of
 them meant writing a key nothing would ever look up. Found by calling the
 real API — a stub that echoes back its own argument cannot show this.
 
-Fare still uses haversine x 1.4. Distance Matrix is spec 014.
+Real road distance (spec 014). Fares are priced from the Routes API, not
+haversine x 1.4.
 
-Nothing in VOLT is rate limited. Deliberately deferred to its own spec rather
-than done on the Places endpoints alone, which would leave /estimate exposed
-while looking covered — and a per-user counter in Postgres would recreate the
-write amplification the expiry throttle just removed. Waits for Redis in
-phase 3. Each proxy call logs the caller id so that spec can pick a threshold
-from evidence.
+Routes API `computeRoutes`, NOT Distance Matrix — Google's own docs put that
+in "Legacy status" ("This API is now in legacy mode. Use Compute Route Matrix
+instead") and the JS DistanceMatrixService is deprecated as of 2026-02-25.
+computeRoutes rather than computeRouteMatrix because this is one origin and
+one destination. When driver matching needs "which online driver is nearest",
+that IS an N x M problem and computeRouteMatrix is the one to reach for.
+
+Two shapes worth remembering: duration comes back as a STRING with a trailing
+"s" ("1837s"), not a number; and `routingPreference: TRAFFIC_AWARE` moves the
+request from the Essentials SKU to Pro. The tier cost is deliberate — the
+duration is shown to a customer deciding whether to book, and in Bengaluru
+traffic is the dominant term in that number. One constant to change if the
+bill argues otherwise.
+
+FARES DID NOT SIMPLY RISE, which is what spec 014 predicted. Measured on five
+real Bengaluru routes (2026-09-04, midday):
+
+  Koramangala -> Whitefield      19.79km -> 17.97km   -9.2%   factor 1.27
+  Koramangala -> Hebbal          16.21km -> 14.98km   -7.6%   factor 1.29
+  Electronic City -> Whitefield  23.70km -> 29.42km  +24.1%   factor 1.74
+  Jayanagar -> Indiranagar       10.95km -> 11.85km   +8.2%   factor 1.51
+  Hebbal -> Electronic City      31.18km -> 27.36km  -12.3%   factor 1.23
+
+Mean change about +0.6% — essentially nothing. The real finding is that 1.4
+was not wrong on average, it was wrong PER ROUTE: the true factor ranges 1.23
+to 1.74. It over-charged long ring-road trips, which are efficient, and
+under-charged short central and peripheral cross-town ones by up to a
+quarter. That is a better argument for this spec than "fares rise" was — the
+flat multiplier mis-priced in both directions, worst exactly where a driver
+eats the difference.
+
+THERE IS NO ROUTE CACHE, and there must not be one. Every fare estimate and
+every booking is a live, billable Routes request.
+
+The licence forbids it. Service Specific Terms **s19 (Routes API)** permits
+caching **latitude and longitude only**, for 30 days. Distance and duration
+are not in that list, and the master ToS prohibits caching Google Maps
+Content except where the Service Specific Terms expressly permit it — so
+unlisted means not permitted. The omission is deliberate rather than an
+oversight: **s11.8** grants distance and duration caching for the Navigation
+Connect API, so Google knows how to say it when it means it.
+
+A route cache WAS built and then removed. It cached distance for 29 days and
+duration for 15 minutes, on the strength of a clause that turned out to
+belong to a different section. The lesson is not about caching: secondhand
+quotations of a licence are not a licence, and the primary text is the only
+thing worth acting on. Spec 014's B4 guardrail said to stop if the terms
+forbade it. They do.
+
+Consequences to keep in mind, none of them worth reopening this:
+- create_booking recomputes distance server-side, so a booking costs TWO
+  Routes requests — one to estimate, one to create. That is the correct price
+  for not trusting a client-supplied distance, which sets the fare.
+- TRAFFIC_AWARE puts both on the Pro SKU.
+- Rate limiting matters more than it did, because there is no cache between a
+  misbehaving client and the bill. /estimate now has a minimal per-IP cap (see
+  the rate limiting section); everything else still waits for its own spec,
+  and the Google-side quota cap remains the only real ceiling on spend.
+
+Graceful degradation is the point of routing.py: timeouts, non-200s, quota
+rejections, malformed bodies and unroutable pairs ALL fall back to haversine
+x 1.4 and log at WARNING, never raise. A fare service that fails closed on a
+third-party outage is worse than one that degrades. bookings.distance_source
+(google | haversine, server default haversine) records which happened, because
+otherwise a degraded hour is invisible in the data forever.
+
+BUT THE DEGRADATION ONLY COVERS THE LAST STEP, and that is worth being honest
+about because it undercuts the premise above. Verified on device 5 Sep 2026
+with a deliberately invalid key: a customer cannot enter an address at all
+during a Google outage. Autocomplete 502s, and dropping a pin fails too,
+because reverse geocoding is also a Google call. There is no address-entry
+path that degrades — no recents, no saved addresses, no free-text fallback.
+So routing.py fails open onto a fare nobody can ever reach: everything
+upstream of the fare fails closed, and a Google outage means nobody books.
+Phase-4 problem, not a today problem, but see Known gaps.
+
+road_distance_m and eta_minutes are unchanged. They are the fallback now, and
+they remain correct for the service-area radius check, which asks how far
+from the centre rather than how far to drive.
+
+THE TEST SPEND GUARD MUST STAY. tests/conftest.py has an autouse fixture
+patching app.services.routing.default_routing_service. Without it the suite
+makes real billable Routes requests: create_booking routes on every call,
+volt-backend/.env holds a live key, and with the cache gone nothing absorbs
+a repeat — every estimate and every booking is its own Pro-tier request.
+
+Every caller reaches the service through the MODULE
+(`routing.default_routing_service()`), never a from-import. That is not
+style: a from-import binds the name into the calling module at import time,
+so patching it at its definition site does nothing. The guard silently
+failed to engage exactly that way the first time — 49 tests were reaching
+the real client while the suite looked green. Proved by making the real
+client raise and watching the failures drop from 49 to 14, the 14 being
+test_routing.py, which constructs the client deliberately and mocks its HTTP
+layer.
+
+Round-trip every migration before committing it: upgrade, downgrade -1,
+upgrade. A migration file can look completely correct and still be wrong —
+op.add_column with sa.Enum does NOT emit CREATE TYPE on PostgreSQL, and a
+generated downgrade drops the column while leaving the type behind, so
+re-upgrading fails. Both were caught only by running it.
+
+Rate limiting: ONE endpoint has it. POST /bookings/estimate is capped at 20
+requests per minute per IP (app/services/rate_limit.py, applied as a route
+dependency). This is not the rate-limiting spec — it is the minimum that had
+to exist before spec 014 merged, because /estimate is public, unauthenticated,
+and now spends a live Pro-tier Routes request per call with no cache behind it.
+
+THE COUNTER IS PER PROCESS, AND THAT FAILURE IS SILENT. Render's free plan
+runs a single instance, so today the limit means what it says. Add a second
+instance — or a paid plan with autoscaling — and each keeps its own dict, so
+the effective limit becomes 20 x N. Nothing errors, nothing logs, and the only
+symptom is a Google bill. Whoever adds instance number two must move this to
+Redis in the same change.
+
+20 was chosen from what a real customer can produce, not from a round number.
+One /estimate returns EVERY vehicle option, so comparing bike against
+mini-truck costs zero extra calls; what spends calls is changing pickup, drop,
+the pin or the weight. The worst legitimate case is a cold-start failure — the
+app's FutureProvider retries twice, so one visible error is three requests, and
+a few Retry taps reach ~12. Note the client will also retry a 429 twice, which
+is wasteful but harmless: a blocked window is never extended by further hits,
+so a retrying client cannot lock itself out.
+
+Keyed on the THIRD X-Forwarded-For entry FROM THE RIGHT. Measured against
+production on 2026-09-05 from a real device:
+
+  106.222.200.144, 172.69.123.178, 10.199.202.132
+  ^ real client     ^ Cloudflare    ^ Render internal
+
+Three trusted hops, each APPENDING what it observed. Counting from the right
+is what makes the index stable: -3 is the address Cloudflare saw no matter how
+many entries a client prepends, because prepending only lengthens the chain
+and shifts nothing at the tail. Spoofing therefore buys nothing.
+
+Both simpler choices are wrong and both were tried. The FIRST entry is
+caller-supplied, so a client rotating a fake value is never limited. The LAST
+entry is Render's internal proxy, IDENTICAL on every request — that shipped
+first, and it made the limiter global rather than per-IP: one 20/min bucket
+shared by every customer in the country. It read as correct, passed its tests,
+and was only caught by measuring the real chain in production. Tests must now
+send a realistic three-entry chain or they exercise the fallback and prove
+nothing, which is exactly how the broken version looked green.
+
+THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY. Drop Cloudflare, add a WAF, move
+hosting, and -3 names the wrong thing. Two of the three directions are
+guarded, and the third cannot be:
+
+- A hop REMOVED is caught. A chain shorter than three entries logs a WARNING
+  naming the actual chain and falls back to the leftmost entry, which is the
+  real client in every "hop disappeared" topology. Spoofable, but a spoofer
+  is still bounded by the Google quota cap, and refusing the request would
+  turn someone else's config change into a total outage of fare estimates.
+  A client cannot trigger this: prepending lengthens the chain, never
+  shortens it.
+
+- An INTERNAL hop added is caught, once there are two or more of them.
+  _is_usable_client_address rejects anything ipaddress calls non-global —
+  private, loopback, link-local, CGNAT, multicast, reserved, IPv6 included,
+  and unparseable junk. An address like 10.x cannot be a client that arrived
+  over the internet, so resolving to one proves the index is wrong. Logs at
+  ERROR (not WARNING: this means the limiter has stopped being per-IP) and
+  falls back to the leftmost entry.
+
+- A PUBLIC hop added is NOT caught and cannot be from inside one request — a
+  WAF's public address is indistinguishable from a customer's. THE SAME BLIND
+  SPOT SWALLOWS EXACTLY ONE ADDED INTERNAL HOP: hops append at the tail, so k
+  added hops put -3 at position k, and k=1 lands on Cloudflare's own public
+  address. k=0 is the client, k=1 is missed, k>=2 is caught. There is a test
+  named test_a_single_added_internal_hop_is_not_caught that records this
+  deliberately rather than leaving it to be discovered from a bill.
+
+RE-MEASURE THE CHAIN AFTER ANY INFRASTRUCTURE CHANGE. _TRUSTED_HOPS is the
+one number to move.
+
+Tests must send GLOBALLY ROUTABLE client addresses. The obvious documentation
+range, 203.0.113.0/24, is classified reserved by ipaddress, so the guard
+rejects it and every test silently exercises the fallback instead of the real
+path. test_rate_limit.py uses real-looking Indian mobile addresses for that
+reason.
+
+What it does NOT do is bound the bill: one IP can still spend 1,200 requests
+an hour. The Google-side per-API daily quota cap remains the only real ceiling.
+The rest — the Places proxy endpoints, per-user limits, anything needing Redis
+— is still its own spec. Not done on Places alone, which would have left
+/estimate exposed while looking covered; and a per-user counter in Postgres
+would recreate the write amplification the expiry throttle just removed. Each
+proxy call logs the caller id so that spec can pick a threshold from evidence.
 
 Crash reporting (spec 013 Part A). Crashlytics in both apps, wired in
 volt_core (src/observability/) rather than per app so the two cannot drift.
@@ -477,7 +661,48 @@ Spec 012 — real addresses:
 - Real addresses render correctly on the driver job board, which is the one
   cross-app consequence of dropping the six hardcoded locations.
 
+## Planned, not built — pricing effort rather than geometry
+
+Recorded so they do not get lost. None of these is spec 014.
+
+The common thread: **VOLT currently prices geometry, not effort.** Distance
+is now real, but distance is still the only thing a fare depends on.
+
+1. **Time-based fare component.** `_fare_paise` takes distance_m and nothing
+   else, so a 6km trip at 11pm and the same trip at 6pm cost the same despite
+   roughly triple the driver's time. Ola, Uber and Porter all price base +
+   per-km + per-minute. Planned as a `per_minute_paise` column on
+   vehicle_types, taking duration from spec 014's RouteResult — which already
+   arrives on every call, so the input is free.
+   IMPORTANT: per-km must come DOWN when per-minute goes in, not stay put.
+   Otherwise it is a second fare rise stacked on 014 rather than a
+   redistribution of the same fare toward the trips that actually cost more.
+
+2. **Waiting charges.** Time between driver_assigned_at and picked_up_at is
+   currently unpaid driver time. Industry norm is a free window of 15-25
+   minutes then per-minute. The mechanism already exists and needs no schema
+   work: final_fare_paise is deliberately separate from quoted_fare_paise for
+   exactly this. Belongs near phase 4 payments.
+
+3. **Proximity matching.** The job board is city-wide, so a Whitefield driver
+   sees a Koramangala pickup and eats the approach unpaid. Nobody charges the
+   customer for the approach — the fix is matching by driver location, which
+   needs phase 3 live tracking. Worth naming as the real reason a driver
+   would decline distant jobs: it is a MATCHING problem, not a pricing one,
+   and adding an approach fee would be solving the wrong thing.
+
 Known gaps:
+- THE APP CANNOT FUNCTION WITHOUT GOOGLE. Verified on device 5 Sep 2026 with
+  an invalid key: autocomplete 502s, and dropping a pin fails too because
+  reverse geocoding is also a Google call. No address-entry path degrades, so
+  a Google outage means nobody can book at all — not "books at a worse fare",
+  nobody books. Spec 014 made FARES fall back gracefully, and that is still
+  true, but it turns out the degradation only covers the last step while
+  everything upstream of it fails closed. Phase 4, not today, and the fix is
+  a booking flow that survives without live geocoding — saved and recent
+  addresses, a free-text fallback, a pin drop that yields coordinates without
+  needing a name for them. Recorded because 014's whole premise was graceful
+  degradation and this is the limit of it.
 - Lazy expiry has no scheduled sweep (see above).
 - Release APKs are debug-signed for both apps — neither can go to the Play
   Store until there's a real signing config. This is spec 013 Part B, and it
@@ -494,8 +719,11 @@ Known gaps:
     new upload key has a DIFFERENT SHA-1, and Firebase phone auth silently
     fails until that fingerprint is added — so set up and left untested it
     would look finished and break precisely when it mattered.
-- No rate limiting anywhere (see above). The Google-side per-API quota cap
-  is currently the only thing bounding spend if a client misbehaves.
+- Rate limiting covers /estimate only, per IP, in process (see above). The
+  Places proxy endpoints, every driver and booking endpoint, and per-user
+  limits generally are all still uncapped, and the counter silently stops
+  working on a second instance. The Google-side per-API quota cap is still
+  the only thing that actually bounds spend if a client misbehaves.
 - Reverse geocode is uncached by necessity, so a customer who drags the map
   a lot spends a billable call per settle. The on-idle trigger is the only
   mitigation.

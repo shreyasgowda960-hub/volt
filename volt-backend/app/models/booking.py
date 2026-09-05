@@ -36,6 +36,17 @@ class PaymentMethod(str, enum.Enum):
     online = "online"
 
 
+class DistanceSource(str, enum.Enum):
+    """How a booking's quoted distance was arrived at.
+
+    Lives here with the other booking enums rather than in the routing
+    service, so the model layer does not depend on a service.
+    """
+
+    google = "google"
+    haversine = "haversine"
+
+
 class Booking(Base, TimestampMixin):
     __tablename__ = "bookings"
 
@@ -153,6 +164,21 @@ class Booking(Base, TimestampMixin):
     goods_description: Mapped[str] = mapped_column(String(255), nullable=False)
     approx_weight_kg: Mapped[float] = mapped_column(
         Numeric(6, 2), nullable=False
+    )
+
+    # How the quoted distance was arrived at: a real Routes API answer, or
+    # the haversine fallback because Google was unreachable, out of quota or
+    # misconfigured at that moment.
+    #
+    # Not derivable after the fact. Without this column an hour of degraded
+    # fares is invisible in the data forever, and "were these fares real?"
+    # stops being answerable. Server default is haversine so every row that
+    # predates spec 014 is labelled honestly rather than optimistically.
+    distance_source: Mapped[DistanceSource] = mapped_column(
+        Enum(DistanceSource, name="distance_source"),
+        default=DistanceSource.haversine,
+        server_default=DistanceSource.haversine.value,
+        nullable=False,
     )
 
     # --- Money: the quote ------------------------------------------------

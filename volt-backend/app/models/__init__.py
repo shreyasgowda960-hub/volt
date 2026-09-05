@@ -1,4 +1,10 @@
-from app.models.booking import Booking, BookingStatus, CancelledBy, PaymentMethod
+from app.models.booking import (
+    Booking,
+    BookingStatus,
+    CancelledBy,
+    DistanceSource,
+    PaymentMethod,
+)
 from app.models.driver import Driver
 from app.models.place_coordinate import PlaceCoordinate
 from app.models.user import User
@@ -8,6 +14,7 @@ __all__ = [
     "Booking",
     "BookingStatus",
     "CancelledBy",
+    "DistanceSource",
     "Driver",
     "PlaceCoordinate",
     "PaymentMethod",

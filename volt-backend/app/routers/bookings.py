@@ -27,6 +27,7 @@ from app.services.booking_lifecycle import (
     VehicleTypeMismatch,
 )
 from app.services.fare import VehicleCapacityExceeded, VehicleTypeNotFound, estimate_all
+from app.services.rate_limit import rate_limit_estimate
 from app.services.service_area import OutsideServiceArea, check_within_service_area
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,18 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/bookings", tags=["bookings"])
 
 
-@router.post("/estimate", response_model=EstimateResponse)
+# Rate limited, and this is the only route in VOLT that is. It is the only
+# public one that spends money per call: since the route cache was removed
+# every estimate is a live Routes request on the Pro SKU, and there is no
+# caller identity here to bill it to. Applied as a route dependency so it runs
+# before the handler body — and so it stays visibly attached to this one route
+# rather than becoming middleware that silently covers the polling endpoints,
+# where a 429 would break a live booking screen.
+@router.post(
+    "/estimate",
+    response_model=EstimateResponse,
+    dependencies=[Depends(rate_limit_estimate)],
+)
 async def estimate_fare(
     payload: EstimateRequest,
     db: AsyncSession = Depends(get_db),
@@ -52,7 +64,9 @@ async def estimate_fare(
             detail=e.user_message,
         )
 
-    distance_m, eta, options = await estimate_all(
+    # The RouteResult is discarded here — /estimate exposes no provenance,
+    # since a quote is not a record. create_booking is where it is stored.
+    distance_m, eta, options, _route = await estimate_all(
         db,
         payload.pickup.lat,
         payload.pickup.lng,

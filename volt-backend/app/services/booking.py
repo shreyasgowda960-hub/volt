@@ -24,7 +24,7 @@ from app.services.booking_lifecycle import (
 from app.services.fare import VehicleCapacityExceeded, _fare_paise, load_vehicle_type
 from app.services.service_area import check_within_service_area
 from app.utils.codes import generate_public_code
-from app.utils.distance import eta_minutes, road_distance_m
+from app.services import routing
 
 logger = logging.getLogger(__name__)
 
@@ -98,12 +98,21 @@ async def create_booking(
     if payload.approx_weight_kg > vehicle.capacity_kg:
         raise VehicleCapacityExceeded(payload.approx_weight_kg, vehicle)
 
-    distance_m = road_distance_m(
+    # Recomputed server-side rather than trusting whatever the client says
+    # it was quoted. That costs a second live Routes request — the customer
+    # just estimated this same route — and it is still the correct price for
+    # not trusting a client-supplied distance, which sets the fare.
+    #
+    # There is deliberately no cache to make this a hit: the Service Specific
+    # Terms permit caching only lat/lng for the Routes API (s19), not distance
+    # or duration.
+    route = await routing.default_routing_service().route(
         payload.pickup.lat,
         payload.pickup.lng,
         payload.drop.lat,
         payload.drop.lng,
     )
+    distance_m = route.distance_m
 
     booking = Booking(
         public_code=await _unique_public_code(db),
@@ -122,7 +131,8 @@ async def create_booking(
         approx_weight_kg=payload.approx_weight_kg,
         quoted_fare_paise=_fare_paise(vehicle, distance_m),
         quoted_distance_m=distance_m,
-        quoted_eta_minutes=eta_minutes(distance_m),
+        quoted_eta_minutes=max(1, round(route.duration_s / 60)),
+        distance_source=route.source,
         # Rate snapshot: changing vehicle_types next month must never rewrite
         # what this booking was quoted.
         quoted_base_fare_paise=vehicle.base_fare_paise,
