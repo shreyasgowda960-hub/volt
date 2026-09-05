@@ -97,9 +97,16 @@ auth, and it is genuinely working end to end in both apps. See *Auth* in
 
 **Why it does not scale.** Two mechanisms:
 
-1. *Per-SMS cost.* For Indian numbers this is roughly an order of magnitude
-   above domestic Indian providers. Invisible at ten testers, a real line item
-   at ten thousand users.
+1. *Per-SMS cost.* **$0.07 for India** — Google Identity Platform pricing
+   page, confirmed 5 Sep 2026. Roughly an order of magnitude above domestic
+   Indian providers. Concretely: 10,000 verifications is **$700**, and that is
+   one sign-in each, before re-auth on a new device or a resent OTP. Invisible
+   at ten testers; a real line item the moment there is a real user base.
+
+   The domestic side of that comparison is **not yet costed** — no provider
+   quote is recorded here, so "an order of magnitude" is an estimate, not a
+   measured saving. Getting one real DLT-registered provider's per-SMS rate is
+   what turns the trigger below from a judgement call into arithmetic.
 2. *The TRAI DLT registration is Google's, not ours.* Messages come from a
    Google-controlled sender, so we have no DLT registration of our own to
    produce if a carrier or an enterprise client asks for one. That is a
