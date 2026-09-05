@@ -26,6 +26,12 @@ from app.services.rate_limit import (
 _CLOUDFLARE = "172.69.123.178"
 _RENDER_INTERNAL = "10.199.202.132"
 
+# Client addresses in these tests must be GLOBALLY ROUTABLE. The obvious
+# choice — the TEST-NET-3 documentation range, 203.0.113.0/24 — is classified
+# reserved by ipaddress, so client_ip's proxy guard would reject every one of
+# them and fall back to the leftmost entry. These are real-looking Indian
+# mobile addresses for that reason; do not "tidy" them back to TEST-NET.
+
 
 def _chain(client: str, *prepended: str) -> str:
     """An X-Forwarded-For shaped the way production actually produces it.
@@ -61,7 +67,7 @@ def _client(ip: str, *prepended: str) -> AsyncClient:
 
 @pytest.mark.asyncio
 async def test_requests_up_to_the_limit_all_pass():
-    async with _client("203.0.113.10") as client:
+    async with _client("106.222.200.10") as client:
         for i in range(ESTIMATE_LIMIT):
             resp = await client.post("/api/v1/bookings/estimate", json=_payload())
             assert resp.status_code == 200, f"request {i + 1} was rejected"
@@ -70,7 +76,7 @@ async def test_requests_up_to_the_limit_all_pass():
 
 @pytest.mark.asyncio
 async def test_request_over_the_limit_returns_429():
-    async with _client("203.0.113.11") as client:
+    async with _client("106.222.200.11") as client:
         for _ in range(ESTIMATE_LIMIT):
             assert (
                 await client.post("/api/v1/bookings/estimate", json=_payload())
@@ -87,7 +93,7 @@ async def test_request_over_the_limit_returns_429():
 
 @pytest.mark.asyncio
 async def test_window_resets():
-    ip = "203.0.113.12"
+    ip = "106.222.200.12"
     base = 1000.0
     clock = {"t": base}
 
@@ -119,7 +125,7 @@ async def test_limit_does_not_apply_to_other_endpoints():
     middleware: the polling endpoints must never 429, or a live booking
     screen goes blank mid-trip.
     """
-    ip = "203.0.113.13"
+    ip = "106.222.200.13"
     async with _client(ip) as client:
         for _ in range(ESTIMATE_LIMIT):
             await client.post("/api/v1/bookings/estimate", json=_payload())
@@ -140,14 +146,14 @@ async def test_one_ip_being_limited_does_not_limit_another():
     Without this, a limiter that ignored its key entirely would pass every
     other test in this file.
     """
-    async with _client("203.0.113.14") as noisy:
+    async with _client("106.222.200.14") as noisy:
         for _ in range(ESTIMATE_LIMIT):
             await noisy.post("/api/v1/bookings/estimate", json=_payload())
         assert (
             await noisy.post("/api/v1/bookings/estimate", json=_payload())
         ).status_code == 429
 
-    async with _client("203.0.113.15") as innocent:
+    async with _client("106.222.200.15") as innocent:
         resp = await innocent.post("/api/v1/bookings/estimate", json=_payload())
     assert resp.status_code == 200
 
@@ -234,6 +240,87 @@ def test_no_forwarded_header_uses_the_peer_and_does_not_warn(caplog):
     assert caplog.records == []
 
 
+def test_extra_internal_hops_trigger_the_guard(caplog):
+    """A hop added inside our infrastructure pushes -3 onto a private address.
+
+    An address in 10/8 cannot be a client that reached us over the internet,
+    so resolving to one proves the index is wrong. Without the guard every
+    request resolves to the same internal address and shares one bucket —
+    the original global-bucket bug arriving by a different door.
+    """
+    chain = ", ".join(
+        [
+            "106.222.200.144",  # real client
+            _CLOUDFLARE,
+            "10.199.202.132",  # Render internal
+            "10.199.202.7",  # added internal hop
+            "10.199.202.9",  # added internal hop
+        ]
+    )
+    with caplog.at_level(logging.ERROR, logger="app.services.rate_limit"):
+        assert client_ip(_FakeRequest({"x-forwarded-for": chain})) == "106.222.200.144"
+
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "10.199.202.132" in message, "must name the address it resolved to"
+    assert chain in message, "must name the full chain, or nobody can re-measure"
+
+
+def test_a_single_added_internal_hop_is_not_caught():
+    """Records a KNOWN LIMITATION rather than asserting good behaviour.
+
+    Hops append at the tail, so k added hops put index -3 at position k:
+    with exactly one added hop, -3 lands on Cloudflare's own address, which
+    is public and therefore passes the guard. The limiter silently keys on a
+    constant again.
+
+    This test exists so the gap is discovered by reading the suite rather
+    than by reading a Google bill. If someone fixes it, this test fails and
+    points them at the docs to update.
+    """
+    chain = ", ".join(
+        ["106.222.200.144", _CLOUDFLARE, "10.199.202.132", "10.199.202.7"]
+    )
+    assert client_ip(_FakeRequest({"x-forwarded-for": chain})) == _CLOUDFLARE
+
+
+def test_normal_chain_does_not_trigger_the_guard(caplog):
+    """The measured production shape must stay silent, or the error becomes
+    noise that everyone learns to scroll past."""
+    with caplog.at_level(logging.ERROR, logger="app.services.rate_limit"):
+        assert client_ip(
+            _FakeRequest({"x-forwarded-for": _chain("106.222.200.144")})
+        ) == "106.222.200.144"
+
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize(
+    "reserved",
+    [
+        "fd00::1",  # unique local (IPv6 private)
+        "fe80::1",  # link-local
+        "::1",  # loopback
+        "10.199.202.132",  # IPv4 private
+        "127.0.0.1",  # IPv4 loopback
+        "169.254.1.1",  # IPv4 link-local
+        "not-an-ip-address",  # obfuscated identifier or junk
+    ],
+)
+def test_guard_fires_on_every_reserved_range(reserved, caplog):
+    """IPv6 included: an internal hop is as likely to be fd00::/8 as 10/8,
+    and a v4-only check would pass it straight through."""
+    # Five entries, so index -3 is the parametrized one. Four would put -3 on
+    # Cloudflare instead — the single-added-hop blind spot recorded above.
+    chain = (
+        f"106.222.200.144, {_CLOUDFLARE}, {reserved}, 10.199.202.7, 10.199.202.9"
+    )
+    with caplog.at_level(logging.ERROR, logger="app.services.rate_limit"):
+        assert client_ip(_FakeRequest({"x-forwarded-for": chain})) == "106.222.200.144"
+
+    assert len(caplog.records) == 1
+
+
 @pytest.mark.asyncio
 async def test_spoofed_entries_cannot_escape_an_exhausted_budget():
     """The security property, end to end rather than on the helper.
@@ -241,7 +328,7 @@ async def test_spoofed_entries_cannot_escape_an_exhausted_budget():
     Exhaust the budget as a normal client, then come back prepending fake
     entries — the thing an attacker would actually try. It must still be 429.
     """
-    ip = "203.0.113.16"
+    ip = "106.222.200.16"
     async with _client(ip) as client:
         for _ in range(ESTIMATE_LIMIT):
             await client.post("/api/v1/bookings/estimate", json=_payload())

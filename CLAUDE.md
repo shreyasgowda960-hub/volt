@@ -518,17 +518,42 @@ and was only caught by measuring the real chain in production. Tests must now
 send a realistic three-entry chain or they exercise the fallback and prove
 nothing, which is exactly how the broken version looked green.
 
-THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY, AND A CHANGE BREAKS IT SILENTLY.
-Drop Cloudflare, add a WAF, move hosting, and -3 names the wrong thing. A hop
-being REMOVED is caught — a chain shorter than three entries logs a WARNING
-naming the actual chain and falls back to the leftmost entry, which is the
-real client in every "hop disappeared" topology (spoofable, but a spoofer is
-still bounded by the Google quota cap, and refusing the request would turn
-someone else's config change into a total outage of fare estimates). A hop
-being ADDED cannot be detected at all: the chain just gets longer and -3
-becomes a proxy address, which reads as one very busy client. RE-MEASURE THE
-CHAIN AFTER ANY INFRASTRUCTURE CHANGE. _TRUSTED_HOPS is the one number to
-move.
+THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY. Drop Cloudflare, add a WAF, move
+hosting, and -3 names the wrong thing. Two of the three directions are
+guarded, and the third cannot be:
+
+- A hop REMOVED is caught. A chain shorter than three entries logs a WARNING
+  naming the actual chain and falls back to the leftmost entry, which is the
+  real client in every "hop disappeared" topology. Spoofable, but a spoofer
+  is still bounded by the Google quota cap, and refusing the request would
+  turn someone else's config change into a total outage of fare estimates.
+  A client cannot trigger this: prepending lengthens the chain, never
+  shortens it.
+
+- An INTERNAL hop added is caught, once there are two or more of them.
+  _is_usable_client_address rejects anything ipaddress calls non-global —
+  private, loopback, link-local, CGNAT, multicast, reserved, IPv6 included,
+  and unparseable junk. An address like 10.x cannot be a client that arrived
+  over the internet, so resolving to one proves the index is wrong. Logs at
+  ERROR (not WARNING: this means the limiter has stopped being per-IP) and
+  falls back to the leftmost entry.
+
+- A PUBLIC hop added is NOT caught and cannot be from inside one request — a
+  WAF's public address is indistinguishable from a customer's. THE SAME BLIND
+  SPOT SWALLOWS EXACTLY ONE ADDED INTERNAL HOP: hops append at the tail, so k
+  added hops put -3 at position k, and k=1 lands on Cloudflare's own public
+  address. k=0 is the client, k=1 is missed, k>=2 is caught. There is a test
+  named test_a_single_added_internal_hop_is_not_caught that records this
+  deliberately rather than leaving it to be discovered from a bill.
+
+RE-MEASURE THE CHAIN AFTER ANY INFRASTRUCTURE CHANGE. _TRUSTED_HOPS is the
+one number to move.
+
+Tests must send GLOBALLY ROUTABLE client addresses. The obvious documentation
+range, 203.0.113.0/24, is classified reserved by ipaddress, so the guard
+rejects it and every test silently exercises the fallback instead of the real
+path. test_rate_limit.py uses real-looking Indian mobile addresses for that
+reason.
 
 What it does NOT do is bound the bill: one IP can still spend 1,200 requests
 an hour. The Google-side per-API daily quota cap remains the only real ceiling.

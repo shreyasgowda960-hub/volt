@@ -43,6 +43,7 @@ implementation, and it made the limiter global instead of per-IP.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import time
@@ -168,6 +169,27 @@ def reset_rate_limits() -> None:
     estimate_limiter.reset()
 
 
+def _is_usable_client_address(value: str) -> bool:
+    """False for anything that cannot be a real client's address.
+
+    `is_global` is the single check that covers the whole set at once:
+    private (10/8, 172.16/12, 192.168/16, IPv6 fc00::/7), loopback,
+    link-local (169.254/16, fe80::/10), CGNAT shared space, multicast and the
+    reserved/documentation ranges. Note that a CUSTOMER behind carrier NAT
+    still presents a global address here — the carrier's public egress is
+    what Cloudflare observes, not the 100.64/10 address inside their network.
+
+    An unparseable value fails too. X-Forwarded-For may legally carry
+    obfuscated identifiers, and a caller can put arbitrary junk there; either
+    way it is not the address this function measured, so it is treated the
+    same as a proxy address rather than silently becoming a bucket key.
+    """
+    try:
+        return ipaddress.ip_address(value).is_global
+    except ValueError:
+        return False
+
+
 def client_ip(request: Request) -> str:
     """The address to key on: the THIRD X-Forwarded-For entry from the right.
 
@@ -195,11 +217,19 @@ def client_ip(request: Request) -> str:
 
     THIS IS PINNED TO SOMEONE ELSE'S TOPOLOGY. Add, remove or reorder a hop —
     drop Cloudflare, put a WAF in front, change hosting — and -3 silently
-    names the wrong thing. Nothing here can detect a hop being ADDED: the
-    chain simply gets longer and -3 becomes a proxy address, which reads as
-    one very busy client. Re-measure the chain after any infrastructure
-    change; the shape is worth re-checking on the deployed service rather
-    than assumed.
+    names the wrong thing. Two of the three directions are guarded:
+
+      * a hop REMOVED shortens the chain below _TRUSTED_HOPS, which a client
+        cannot cause. Warns, then falls back to the leftmost entry.
+      * a hop ADDED can push -3 onto an internal address. That is caught by
+        _is_usable_client_address: a private, loopback, link-local or
+        otherwise reserved address cannot be a real client arriving over the
+        internet, so resolving to one proves the index is wrong.
+      * a PUBLIC hop added is NOT caught, and cannot be from inside a single
+        request — a WAF's public address is indistinguishable from a
+        customer's. Note this includes the case of exactly ONE added internal
+        hop, where -3 lands on Cloudflare's own public address. Re-measure
+        the chain after any infrastructure change.
     """
     forwarded = request.headers.get("x-forwarded-for")
     if not forwarded:
@@ -211,7 +241,30 @@ def client_ip(request: Request) -> str:
     parts = [p.strip() for p in forwarded.split(",") if p.strip()]
 
     if len(parts) >= _TRUSTED_HOPS:
-        return parts[-_TRUSTED_HOPS]
+        resolved = parts[-_TRUSTED_HOPS]
+        if _is_usable_client_address(resolved):
+            return resolved
+
+        # A private, loopback, link-local or reserved address at -3 cannot be
+        # a client that reached us over the internet. It is a proxy — so a hop
+        # has been added and the index is now pointing inside our own
+        # infrastructure. Left alone, every request would resolve to the same
+        # internal address and share one bucket: the original bug, returning
+        # by a different door.
+        #
+        # ERROR rather than WARNING because unlike a shortened chain this is
+        # not a benign degradation — it means the limiter has silently stopped
+        # being per-IP, and somebody has to re-measure and move _TRUSTED_HOPS.
+        logger.error(
+            "X-Forwarded-For resolved to %s, which cannot be a public client "
+            "address — a proxy hop has been added and _TRUSTED_HOPS=%d is now "
+            "wrong. Falling back to the leftmost entry, which is "
+            "caller-supplied. Re-measure the chain. Chain was: %s",
+            resolved,
+            _TRUSTED_HOPS,
+            forwarded,
+        )
+        return parts[0]
 
     # Fewer entries than there are trusted hops. A client cannot cause this —
     # prepending makes the chain longer, never shorter — so it means a hop was
