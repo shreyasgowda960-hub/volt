@@ -89,14 +89,24 @@ error translation, auth repositories and providers, theme, `AppConfig`,
 **Spec 014 — real road distance.** Complete on branch `feat/road-distance`,
 **not merged**. Google Routes API `computeRoutes`, `TRAFFIC_AWARE`, with a
 haversine fallback. **No cache** — see the closed question below; one was
-built and then removed for licence reasons. Blocked on two things:
+built and then removed for licence reasons. On-device verification is now
+done; **merge and deploy is the only thing left**:
 
-1. Step C **row 5 only** (fares vs before, on real routes) plus the on-device
-   fare comparison. Rows 1–4 and 6 are covered by the backend tests,
-   including row 3 — the deliberate-outage case — which has 12 of them. Row 6
-   (service-area rejection still straight-line) is test-covered.
+1. ~~Step C row 5 and the on-device fare comparison.~~ **DONE 5 Sep 2026.**
+   Koramangala → Whitefield on a Bike, local backend over LAN: ₹154 with
+   Google Routes, ₹172 on the haversine fallback forced by a 1ms timeout,
+   with the booking completing and the fallback visible in the log rather
+   than failing silently. Full record in CLAUDE.md's device-verification
+   section, including two things the raw numbers do not say on their own —
+   the ₹172 matches the 09-04 haversine figure exactly, and the ₹154 implies
+   a route about half a kilometre shorter than 09-04 measured, which is
+   TRAFFIC_AWARE on a different day rather than a fault.
 2. Merge and deploy. **One** migration rides along: `afbcf9152650`
    (`bookings.distance_source`). Additive and safe on the live table.
+   Then RE-VERIFY AGAINST PRODUCTION: everything above ran against a local
+   server on the branch, so the deployed key's restrictions and quota caps
+   are still unproven for the Routes API. Spec 012 was re-run post-merge for
+   exactly this reason; 014 has not been.
 
 Because there is no cache, a booking costs **two** live Routes requests — one
 to estimate, one for create_booking's server-side recompute — both on the Pro

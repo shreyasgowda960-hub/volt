@@ -652,6 +652,44 @@ Spec 013 Part A — Crashlytics (release build, real device):
   .so, .dex and asset without it. bool.fromEnvironment folds to a const, so
   the tree-shaker removes the widget entirely.
 
+Spec 014 — real road distance (5 Sep 2026, local backend on feat/road-distance,
+RMX3371 over LAN). Koramangala -> Whitefield, Bike:
+- Google Routes (TRAFFIC_AWARE), valid key: ₹154. Haversine fallback, forced
+  by setting _TIMEOUT to 1ms: ₹172. The 1ms timeout was reverted afterwards.
+- The fallback degrades rather than fails: the booking completed, POST
+  /bookings/estimate still returned 200, and the log read "routing: falling
+  back to haversine — transport failure: ConnectTimeout:". That is the whole
+  graceful-degradation claim, exercised end to end from a phone rather than
+  from a test double.
+- ₹172 CONFIRMS THE FALLBACK TO THE RUPEE. 19.79km on the seeded bike rates
+  (₹30 base, 2km included, ₹8/km) is ₹172.32 — exactly the 09-04 haversine
+  figure for this route.
+- ₹154 does NOT correspond to the 09-04 Google figure. It implies 17.44-17.56km;
+  the 17.97km measured on 09-04 would have quoted ₹158. Same named route, a
+  different day, TRAFFIC_AWARE — the route itself moved about half a kilometre.
+  Nothing is wrong; it means a route is not a fixed number and a single quote
+  is not reproducible evidence.
+- FARE PERCENTAGES ARE NOT DISTANCE PERCENTAGES, and the five-route table
+  above is distances. The ₹30 base and the free first 2km are not
+  distance-proportional, so a 9.2% shorter route is an 8.45% cheaper fare.
+  The ₹172 -> ₹154 seen on device is -10.6% on fare, which implies -11.6% on
+  distance. Do not quote one as the other — this matters more once a
+  per-minute component lands (see Planned, below), because it will break
+  proportionality again in a different place.
+- NOT verified against production. Spec 012 was re-run against the deployed
+  backend after merging; this has only run against a local server on the
+  branch, so the deployed key's restrictions and quota caps are still
+  unproven for Routes. Do that after merge.
+
+An earlier attempt at that outage test was INVALID, recorded so nobody repeats
+it. It blanked GOOGLE_MAPS_API_KEY entirely instead of breaking only the
+routing call. That takes Places down too: autocomplete 502'd, no address could
+be selected, map pin drop failed on the same key, and /bookings/estimate was
+therefore never reached — so nothing about the routing fallback was exercised
+at all. The valid test breaks ONLY the Routes call, which is what the 1ms
+timeout does. The invalid run was not wasted, though: it is how the
+Google-dependency entry in Known gaps was found.
+
 Spec 012 — real addresses:
 - Autocomplete, map pin drop, current location, service-area rejection, and a
   full booking with real addresses all pass.
@@ -692,9 +730,9 @@ is now real, but distance is still the only thing a fare depends on.
    and adding an approach fee would be solving the wrong thing.
 
 Known gaps:
-- THE APP CANNOT FUNCTION WITHOUT GOOGLE. Verified on device 5 Sep 2026 with
-  an invalid key: autocomplete 502s, and dropping a pin fails too because
-  reverse geocoding is also a Google call. No address-entry path degrades, so
+- THE APP CANNOT FUNCTION WITHOUT GOOGLE. Found on device 5 Sep 2026 by
+  blanking GOOGLE_MAPS_API_KEY: autocomplete 502s, and dropping a pin fails
+  too because reverse geocoding is also a Google call. No address-entry path degrades, so
   a Google outage means nobody can book at all — not "books at a worse fare",
   nobody books. Spec 014 made FARES fall back gracefully, and that is still
   true, but it turns out the degradation only covers the last step while
