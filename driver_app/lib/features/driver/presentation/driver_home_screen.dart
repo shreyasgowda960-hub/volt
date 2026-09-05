@@ -337,7 +337,7 @@ class _JobCard extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
-        color: Colors.white,
+        color: AppColors.surface,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -375,7 +375,7 @@ class _JobCard extends StatelessWidget {
                   ? const SizedBox(
                       height: 20,
                       width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.onPrimary),
                     )
                   : const Text('Accept'),
             ),

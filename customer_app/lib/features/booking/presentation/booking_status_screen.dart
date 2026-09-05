@@ -312,16 +312,16 @@ class _StaleBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        color: AppColors.danger.withValues(alpha: 0.08),
+        color: AppColors.error.withValues(alpha: 0.08),
       ),
       child: const Row(
         children: [
-          Icon(Icons.cloud_off_outlined, size: 16, color: AppColors.danger),
+          Icon(Icons.cloud_off_outlined, size: 16, color: AppColors.error),
           SizedBox(width: 8),
           Expanded(
             child: Text(
               'Not updating — check your connection',
-              style: TextStyle(fontSize: 12, color: AppColors.danger),
+              style: TextStyle(fontSize: 12, color: AppColors.error),
             ),
           ),
         ],
@@ -590,7 +590,7 @@ class _StepRow extends StatelessWidget {
               height: 28,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: done ? AppColors.navy : Colors.white,
+                color: done ? AppColors.navy : AppColors.surface,
                 border: Border.all(
                   color: done || current ? AppColors.navy : AppColors.border,
                   width: current ? 2 : 1,
@@ -598,6 +598,8 @@ class _StepRow extends StatelessWidget {
               ),
               child: Center(
                 child: done
+                    // White on NAVY, the one pairing where white is correct.
+                    // Amber never carries white text - see AppColors.onPrimary.
                     ? const Icon(Icons.check, size: 16, color: Colors.white)
                     : current
                         ? const SizedBox(

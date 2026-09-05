@@ -149,7 +149,7 @@ class _VehicleSelectScreenState extends ConsumerState<VehicleSelectScreen> {
                         height: 20,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          color: Colors.white,
+                          color: AppColors.onPrimary,
                         ),
                       )
                     : const Text('Confirm booking'),
@@ -245,7 +245,9 @@ class _VehicleCard extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
-          color: selected ? AppColors.navy.withValues(alpha: 0.06) : Colors.white,
+          color: selected
+                ? AppColors.navy.withValues(alpha: 0.06)
+                : AppColors.surface,
           border: Border.all(
             color: selected ? AppColors.navy : AppColors.border,
             width: selected ? 2 : 1,

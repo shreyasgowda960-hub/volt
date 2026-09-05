@@ -398,3 +398,40 @@ provide.
 
 **What waiting costs.** `TBD — owner decision`. Nothing structural — the sweep
 is idempotent and the throttle is per-process by design.
+
+---
+
+## 11. Light theme → a dark variant
+
+Deferred by spec 016 itself rather than discovered later.
+
+**What we do today.** One light theme, shared by both apps, in
+`packages/volt_core/lib/src/theme/`. `MaterialApp` sets `theme` and no
+`darkTheme`, so a phone in dark mode still gets the light one — deliberate,
+not an omission. The native splash is light in both `values` and
+`values-night`, for the same reason.
+
+**Why it does not scale.** It is not a scaling problem, it is an unserved use
+case: **drivers work at night.** A light app at 11pm on a bike is a worse tool
+than a dark one, and the amber-on-navy of the logo is closer in character to a
+dark theme than to the light one that ships. Light went first because it
+matches the mark, reads in daylight, and is one theme rather than two.
+
+**What replaces it.** A second `ColorScheme` plus a dark `ThemeData`, selected
+by `themeMode`. Mostly mechanical — **provided no screen has its own opinion
+about colour.** That is the real reason spec 016's step 5 mattered beyond
+tidiness: every hardcoded `Colors.white` left behind is a pixel that ignores
+the dark theme and has to be hunted down later. After 016 there is exactly one
+left in app code, commented, and it is white-on-navy.
+
+**Trigger.** After the first real driver feedback, or when night bookings are
+a meaningful share of volume.
+
+**Rough size.** Mostly a second `ColorScheme`. The larger unknown is not Dart:
+the launcher icon and splash have `values-night` variants that currently
+duplicate the light ones, and the adaptive icon background is a flat colour
+per app.
+
+**What waiting costs.** It grows with every screen added between now and then,
+since each one is another chance to hardcode a colour. Cheap to hold at
+today's screen count.

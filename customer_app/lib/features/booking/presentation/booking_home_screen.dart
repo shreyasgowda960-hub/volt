@@ -133,7 +133,7 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                 const SizedBox(height: 12),
                 const Text(
                   "Pickup and drop can't be the same",
-                  style: TextStyle(color: AppColors.danger, fontSize: 13),
+                  style: TextStyle(color: AppColors.error, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 20),

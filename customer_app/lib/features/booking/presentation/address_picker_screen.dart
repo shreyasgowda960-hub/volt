@@ -730,7 +730,7 @@ class _InlineMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colour = isError ? AppColors.danger : AppColors.navy;
+    final colour = isError ? AppColors.error : AppColors.navy;
 
     return Container(
       width: double.infinity,

@@ -255,7 +255,7 @@ class _JobBody extends StatelessWidget {
             const SizedBox(height: 16),
             Text(error!,
                 style:
-                    const TextStyle(color: AppColors.danger, fontSize: 13)),
+                    const TextStyle(color: AppColors.error, fontSize: 13)),
           ],
           const Spacer(),
           if (job.status == JobStatus.driverAssigned)
@@ -277,7 +277,7 @@ class _JobBody extends StatelessWidget {
         height: 22,
         width: 22,
         child:
-            CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+            CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.onPrimary),
       );
 }
 

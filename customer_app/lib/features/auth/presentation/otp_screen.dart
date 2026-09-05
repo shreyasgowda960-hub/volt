@@ -102,7 +102,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                 const SizedBox(height: 10),
                 Text(
                   _error!,
-                  style: const TextStyle(color: AppColors.danger, fontSize: 13),
+                  style: const TextStyle(color: AppColors.error, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 28),
@@ -114,7 +114,7 @@ class _OtpScreenState extends ConsumerState<OtpScreen> {
                         width: 22,
                         child: CircularProgressIndicator(
                           strokeWidth: 2.5,
-                          color: Colors.white,
+                          color: AppColors.onPrimary,
                         ),
                       )
                     : const Text('Verify'),

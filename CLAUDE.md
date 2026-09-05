@@ -730,6 +730,78 @@ Spec 012 — real addresses:
 - Real addresses render correctly on the driver job board, which is the one
   cross-app consequence of dropping the six hardcoded locations.
 
+Theme and branding (spec 016). One theme for both apps, in
+packages/volt_core/lib/src/theme/ — app_colors.dart holds the tokens,
+app_theme.dart builds the ThemeData. Navy and electric amber, sampled from the
+logo.
+
+SCREENS REFERENCE TOKENS, NEVER RAW VALUES. No `Color(0x...)`, no
+`Colors.white`, no bare `padding: 16` — use AppColors, AppSpacing (4/8/12/16/
+24/32) and AppRadius (8/12/16). This is not tidiness: the dark theme is a
+planned second ColorScheme (future-plans §11) and it is only cheap if no
+screen has its own opinion about colour. There is exactly ONE hardcoded colour
+left in app code — a white tick on a navy circle in the booking timeline — and
+it carries a comment saying why.
+
+AMBER IS FOR PRIMARY ACTIONS AND HIGHLIGHTS ONLY. It is NOT the warning
+colour: warning is orange (#E8730A), deliberately distinct, so a warning
+cannot read as a button.
+
+AMBER NEVER CARRIES WHITE TEXT. White on amber is about 1.9:1 and unreadable.
+Text and icons on amber are navy — AppColors.onPrimary. If something seems to
+need white on amber, the answer is navy, not a lighter white. The one place
+white-on-brand IS correct is white on navy: the app bar, and that timeline
+tick. Spec 016 found eight button spinners that were white-on-navy and became
+white-on-amber the moment the primary button changed colour; that is the shape
+of mistake to watch for.
+
+Every primary action in both apps is a FilledButton — 22 of them, zero
+ElevatedButtons. filledButtonTheme is the one that matters;
+elevatedButtonTheme is set identically so a future ElevatedButton cannot
+render un-themed by accident.
+
+The ColorScheme is written out rather than seeded. ColorScheme.fromSeed
+invents tonal values that drift from the sampled palette — the previous theme
+seeded from navy and produced a secondary nothing in the logo resembles.
+
+LIGHT ONLY, BY DECISION. MaterialApp sets `theme` and no `darkTheme`, so a
+phone in dark mode still gets the light theme, and the native splash is light
+in values-night too. Dark is deferred, not forgotten — future-plans §11.
+
+Typography is the platform font. google_fonts' runtime fetch is banned here: it
+downloads on first use, and a delivery app that renders wrong until it has
+network is a bad trade for a typeface.
+
+Two dev_dependencies, both build-time only, generating native assets and
+shipping no runtime code:
+- flutter_launcher_icons — Android launcher icons at every density plus the
+  adaptive-icon layers.
+- flutter_native_splash — the native splash, including the Android 12+ API
+  (values-v31), not just the legacy path.
+Re-run `dart run flutter_launcher_icons` and
+`dart run flutter_native_splash:create` in each app after changing the source
+images; the generated files under android/app/src/main/res are committed.
+
+The launcher icon is the LIGHTNING BOLT ALONE, not the logo. At 48dp the
+vehicles, skyline and tagline are illegible. The bolt was REDRAWN as vector
+geometry, not cropped: the bolt in the raster logo is about 290x365px and an
+adaptive foreground wants 432px, so a crop meant ~1.5x upscaling. Customer is
+amber-on-navy, driver is navy-on-amber, so two VOLT icons on one phone read as
+siblings rather than duplicates.
+
+The splash uses the full logo on #FAFAFB — EXCEPT on Android 12+, where the
+platform masks the splash icon to a circle and would crop the wordmark and
+tagline away. That path uses the bolt instead. Not a preference; the API does
+not offer a full-bleed image.
+
+packages/volt_core/assets/ holds both logo files so the apps cannot drift:
+volt-logo.png is the original, volt-logo-transparent.png is the keyed version
+the splash uses. The original is RGB with a WHITE background, not transparent,
+so it would have shown a white square on the off-white splash. The white was
+removed by flood-filling inward from the border, NOT by luminance — the truck
+cab in the logo is genuinely white, and a luminance key punches a hole through
+it.
+
 ## Planned, not built
 
 Moved to docs/future-plans.md on 5 Sep 2026 — deferred decisions live there

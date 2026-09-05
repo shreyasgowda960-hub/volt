@@ -136,7 +136,7 @@ class _DriverRegistrationScreenState
                 ),
                 error: (error, _) => Text(
                   error is ApiException ? error.message : 'Could not load vehicle types.',
-                  style: const TextStyle(color: AppColors.danger),
+                  style: const TextStyle(color: AppColors.error),
                 ),
                 data: (types) => DropdownButtonFormField<VehicleTypeOption>(
                   isExpanded: true,
@@ -157,7 +157,7 @@ class _DriverRegistrationScreenState
                 const SizedBox(height: 12),
                 Text(
                   _error!,
-                  style: const TextStyle(color: AppColors.danger, fontSize: 13),
+                  style: const TextStyle(color: AppColors.error, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 28),
@@ -169,7 +169,7 @@ class _DriverRegistrationScreenState
                         width: 22,
                         child: CircularProgressIndicator(
                           strokeWidth: 2.5,
-                          color: Colors.white,
+                          color: AppColors.onPrimary,
                         ),
                       )
                     : const Text('Register'),

@@ -50,6 +50,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -92,3 +94,40 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# --- Build-time asset generation (spec 016) --------------------------------
+# Both packages below are dev_dependencies that generate NATIVE assets at
+# build time and ship no runtime code.
+
+# Launcher icon: the lightning bolt alone, NOT the full logo. At 48dp in a
+# launcher grid the vehicles, skyline and tagline are illegible. The bolt is
+# the strongest element in the mark and the only one that survives scaling.
+# Redrawn as vector geometry rather than cropped from the raster logo, which
+# would have needed ~1.5x upscaling.
+#
+# Inverted against the customer app - navy bolt on amber - so that two VOLT
+# icons on one phone read as siblings rather than as duplicates.
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#F5B400"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
+
+# Splash: the full logo, centred on AppColors.background. The logo is shared
+# from volt_core so the two apps cannot drift apart.
+#
+# android_12 uses the BOLT, not the full logo: the Android 12+ splash API
+# masks its icon to a circle, so the wordmark and tagline would be cropped
+# away. The legacy path below still shows the whole mark.
+flutter_native_splash:
+  color: "#FAFAFB"
+  image: "../packages/volt_core/assets/volt-logo-transparent.png"
+  android: true
+  ios: false
+  web: false
+  android_gravity: center
+  android_12:
+    color: "#FAFAFB"
+    image: "assets/icon/icon_foreground.png"

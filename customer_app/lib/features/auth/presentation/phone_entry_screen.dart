@@ -75,7 +75,7 @@ class _PhoneEntryScreenState extends ConsumerState<PhoneEntryScreen> {
               const SizedBox(height: 64),
               Row(
                 children: [
-                  const Icon(Icons.bolt, color: AppColors.yellow, size: 40),
+                  const Icon(Icons.bolt, color: AppColors.primary, size: 40),
                   const SizedBox(width: 4),
                   Text(
                     'VOLT',
@@ -126,7 +126,7 @@ class _PhoneEntryScreenState extends ConsumerState<PhoneEntryScreen> {
                 const SizedBox(height: 10),
                 Text(
                   _error!,
-                  style: const TextStyle(color: AppColors.danger, fontSize: 13),
+                  style: const TextStyle(color: AppColors.error, fontSize: 13),
                 ),
               ],
               const SizedBox(height: 28),
@@ -138,7 +138,7 @@ class _PhoneEntryScreenState extends ConsumerState<PhoneEntryScreen> {
                         width: 22,
                         child: CircularProgressIndicator(
                           strokeWidth: 2.5,
-                          color: Colors.white,
+                          color: AppColors.onPrimary,
                         ),
                       )
                     : const Text('Continue'),
