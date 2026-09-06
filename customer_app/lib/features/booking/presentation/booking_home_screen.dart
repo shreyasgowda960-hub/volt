@@ -5,6 +5,7 @@ import 'package:volt_core/volt_core.dart';
 import '../application/booking_providers.dart';
 import '../domain/place.dart';
 import 'address_picker_screen.dart';
+import 'circle_reveal_route.dart';
 import 'vehicle_select_screen.dart';
 
 class BookingHomeScreen extends ConsumerStatefulWidget {
@@ -18,11 +19,31 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
   final _goodsController = TextEditingController();
   final _weightController = TextEditingController();
 
+  /// Submitting the goods field jumps here rather than dismissing the
+  /// keyboard, so the two fields are one continuous action.
+  final _weightFocus = FocusNode();
+
+  /// The reveal starts from this button, so the fare screen appears to come
+  /// out of the thing that asked for it.
+  final _ctaKey = GlobalKey();
+
   @override
   void dispose() {
     _goodsController.dispose();
     _weightController.dispose();
+    _weightFocus.dispose();
     super.dispose();
+  }
+
+  /// What to call the customer.
+  ///
+  /// The phone number today. THIS IS THE ONE LINE TO CHANGE when profiles
+  /// land and a real name is available — everything else about the greeting
+  /// stays as it is.
+  String _greeting(VoltSession? session) {
+    final phone = session?.phone;
+    if (phone == null || phone.isEmpty) return 'there';
+    return phone;
   }
 
   Future<void> _pick({required bool isPickup}) async {
@@ -49,6 +70,23 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
     }
   }
 
+  void _seeFares(String goodsDescription, double approxWeightKg) {
+    // Dismiss the keyboard first: a reveal playing behind a keyboard that is
+    // also animating out looks like two unrelated things happening at once.
+    FocusScope.of(context).unfocus();
+
+    Navigator.of(context).push(
+      CircleRevealRoute<void>(
+        origin: globalCentreOf(_ctaKey) ??
+            (Offset.zero & MediaQuery.sizeOf(context)).center,
+        builder: (_) => VehicleSelectScreen(
+          goodsDescription: goodsDescription,
+          approxWeightKg: approxWeightKg,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final session = ref.watch(sessionProvider);
@@ -67,30 +105,13 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        // The phone number lives here rather than as a loose grey line at the
-        // top of the body. It is orientation, not content — it belongs with
-        // the identity of the screen, not in the flow of it.
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'VOLT',
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                fontSize: 20,
-                letterSpacing: 0.5,
-              ),
-            ),
-            Text(
-              session?.phone ?? 'Signed in',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: Colors.white.withValues(alpha: 0.7),
-              ),
-            ),
-          ],
+        title: const Text(
+          'VOLT',
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 20,
+            letterSpacing: 0.5,
+          ),
         ),
         actions: [
           IconButton(
@@ -115,17 +136,25 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Where to?',
-                      style: Theme.of(context).textTheme.headlineSmall,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    const Text(
-                      'Search an address or drop a pin to see fares.',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                        height: 1.4,
+                    // The only heading on the screen. The old "Where to?" said
+                    // nothing the fields below it do not already say.
+                    Text.rich(
+                      TextSpan(
+                        children: [
+                          const TextSpan(
+                            text: 'Hi, ',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w400,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                          TextSpan(text: _greeting(session)),
+                        ],
+                      ),
+                      style: const TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                     const SizedBox(height: AppSpacing.xl),
@@ -133,21 +162,19 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
                     // Pickup and drop as ONE object, not two. They describe a
                     // single journey, and the connector between them is what
                     // makes that legible at a glance.
-                    _SectionCard(
+                    _Panel(
                       padding: EdgeInsets.zero,
                       child: Column(
                         children: [
                           _RouteRow(
-                            label: 'PICKUP',
-                            hint: 'Search pickup address',
+                            label: 'Pickup',
                             place: pickup,
                             isOrigin: true,
                             onTap: () => _pick(isPickup: true),
                           ),
                           const _RouteConnector(),
                           _RouteRow(
-                            label: 'DROP',
-                            hint: 'Search drop address',
+                            label: 'Drop',
                             place: drop,
                             isOrigin: false,
                             onTap: () => _pick(isPickup: false),
@@ -158,51 +185,45 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
 
                     if (sameLocation) ...[
                       const SizedBox(height: AppSpacing.md),
-                      const _InlineError(
-                        "Pickup and drop can't be the same",
-                      ),
+                      const _InlineError("Pickup and drop can't be the same"),
                     ],
 
-                    const SizedBox(height: AppSpacing.xl),
-                    const _SectionLabel('CONSIGNMENT'),
                     const SizedBox(height: AppSpacing.md),
-                    _SectionCard(
+
+                    // No section heading and no labels above the fields: the
+                    // floating labels carry the copy, which is one row of
+                    // text saved on a screen that had too many.
+                    _Panel(
                       child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const _FieldLabel('What are you sending?'),
-                          const SizedBox(height: AppSpacing.sm),
                           TextField(
                             controller: _goodsController,
                             maxLength: 255,
                             textCapitalization: TextCapitalization.sentences,
-                            decoration: const InputDecoration(
-                              hintText: 'e.g. Two cartons of books',
-                              prefixIcon: Icon(Icons.inventory_2_outlined),
-                              // The 0/255 counter is noise: 255 is a database
-                              // limit, not a target anyone is writing towards.
-                              counterText: '',
+                            textInputAction: TextInputAction.next,
+                            onSubmitted: (_) => _weightFocus.requestFocus(),
+                            style: const TextStyle(fontSize: 15),
+                            decoration: _denseField(
+                              label: 'What are you sending?',
+                              hint: 'e.g. Two cartons of books',
+                              icon: Icons.inventory_2_outlined,
                             ),
                             onChanged: (_) => setState(() {}),
                           ),
-                          const SizedBox(height: AppSpacing.lg),
-                          const _FieldLabel('Approximate weight'),
                           const SizedBox(height: AppSpacing.sm),
                           TextField(
                             controller: _weightController,
+                            focusNode: _weightFocus,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
-                            decoration: const InputDecoration(
-                              hintText: 'e.g. 12.5',
-                              prefixIcon: Icon(Icons.scale_outlined),
-                              // Unit as a suffix rather than "(kg)" bolted on
-                              // to the label — it belongs next to the number.
-                              suffixText: 'kg',
-                              suffixStyle: TextStyle(
-                                color: AppColors.textSecondary,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            textInputAction: TextInputAction.done,
+                            style: const TextStyle(fontSize: 15),
+                            decoration: _denseField(
+                              label: 'Approx. weight',
+                              hint: 'e.g. 12.5',
+                              icon: Icons.scale_outlined,
+                              suffix: 'kg',
                             ),
                             onChanged: (_) => setState(() {}),
                           ),
@@ -222,15 +243,9 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
             // was previously below the fold.
             _BottomBar(
               child: FilledButton(
+                key: _ctaKey,
                 onPressed: canProceed
-                    ? () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => VehicleSelectScreen(
-                              goodsDescription: goodsDescription,
-                              approxWeightKg: approxWeightKg,
-                            ),
-                          ),
-                        )
+                    ? () => _seeFares(goodsDescription, approxWeightKg)
                     : null,
                 child: const Text('See fare estimates'),
               ),
@@ -242,12 +257,43 @@ class _BookingHomeScreenState extends ConsumerState<BookingHomeScreen> {
   }
 }
 
-/// A white panel with a hairline border. Elevation is a shadow rather than a
-/// Material surface tint, which on a near-white background reads as dirt.
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
+/// Compact field styling: floating label instead of a heading above the box,
+/// and the counter hidden — 255 is a database limit, not a target anyone is
+/// writing towards.
+InputDecoration _denseField({
+  required String label,
+  required String hint,
+  required IconData icon,
+  String? suffix,
+}) {
+  return InputDecoration(
+    labelText: label,
+    hintText: hint,
+    counterText: '',
+    isDense: true,
+    filled: false,
+    prefixIcon: Icon(icon, size: 20),
+    suffixText: suffix,
+    suffixStyle: const TextStyle(
+      color: AppColors.textSecondary,
+      fontWeight: FontWeight.w600,
+    ),
+    contentPadding: const EdgeInsets.symmetric(vertical: 14),
+    border: InputBorder.none,
+    enabledBorder: InputBorder.none,
+    focusedBorder: InputBorder.none,
+    errorBorder: InputBorder.none,
+    focusedErrorBorder: InputBorder.none,
+  );
+}
+
+/// A white panel with a hairline border. No shadow: at this density the
+/// screen is a stack of quiet surfaces, and shadows on all of them read as
+/// clutter rather than as depth.
+class _Panel extends StatelessWidget {
+  const _Panel({
     required this.child,
-    this.padding = const EdgeInsets.all(AppSpacing.lg),
+    this.padding = const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
   });
 
   final Widget child;
@@ -262,54 +308,8 @@ class _SectionCard extends StatelessWidget {
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.navy.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
       ),
       child: child,
-    );
-  }
-}
-
-/// Small caps section heading. Sits outside its card so the card stays a
-/// single uninterrupted surface.
-class _SectionLabel extends StatelessWidget {
-  const _SectionLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 1.2,
-        color: AppColors.textSecondary,
-      ),
-    );
-  }
-}
-
-class _FieldLabel extends StatelessWidget {
-  const _FieldLabel(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: AppColors.textPrimary,
-      ),
     );
   }
 }
@@ -322,14 +322,12 @@ class _FieldLabel extends StatelessWidget {
 class _RouteRow extends StatelessWidget {
   const _RouteRow({
     required this.label,
-    required this.hint,
     required this.place,
     required this.isOrigin,
     required this.onTap,
   });
 
   final String label;
-  final String hint;
   final Place? place;
   final bool isOrigin;
   final VoidCallback onTap;
@@ -345,74 +343,57 @@ class _RouteRow extends StatelessWidget {
         bottom: Radius.circular(isOrigin ? 0 : AppRadius.lg),
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.lg,
-          vertical: AppSpacing.lg,
-        ),
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.md + 2),
         child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             SizedBox(
-              width: 28,
+              width: 22,
               child: Center(
-                child: isOrigin ? const _OriginDot() : const _DestinationPin(),
+                child: isOrigin ? const _OriginDot() : const _DestinationDot(),
               ),
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.1,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  if (chosen == null)
-                    Text(
-                      hint,
+              child: chosen == null
+                  ? Text(
+                      label,
                       style: const TextStyle(
                         color: AppColors.textDisabled,
                         fontSize: 15,
                       ),
                     )
-                  else ...[
-                    Text(
-                      chosen.shortAddress,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: AppColors.textPrimary,
-                      ),
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          chosen.shortAddress,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          chosen.address,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      chosen.address,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                        height: 1.35,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
             ),
             const SizedBox(width: AppSpacing.sm),
-            Padding(
-              padding: const EdgeInsets.only(top: AppSpacing.md),
-              child: Icon(
-                chosen == null ? Icons.search : Icons.edit_outlined,
-                size: 18,
-                color: chosen == null ? AppColors.textDisabled : AppColors.navy,
-              ),
+            Icon(
+              chosen == null ? Icons.search : Icons.edit_outlined,
+              size: 17,
+              color: chosen == null ? AppColors.textDisabled : AppColors.navy,
             ),
           ],
         ),
@@ -428,11 +409,11 @@ class _OriginDot extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 14,
-      width: 14,
+      height: 12,
+      width: 12,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: Border.all(color: AppColors.navy, width: 3),
+        border: Border.all(color: AppColors.navy, width: 2.5),
       ),
     );
   }
@@ -440,18 +421,18 @@ class _OriginDot extends StatelessWidget {
 
 /// Destination marker: solid amber, so the two ends of the journey are
 /// distinguishable without reading the labels.
-class _DestinationPin extends StatelessWidget {
-  const _DestinationPin();
+class _DestinationDot extends StatelessWidget {
+  const _DestinationDot();
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 14,
-      width: 14,
+      height: 12,
+      width: 12,
       decoration: BoxDecoration(
         color: AppColors.primary,
         shape: BoxShape.circle,
-        border: Border.all(color: AppColors.navy, width: 2),
+        border: Border.all(color: AppColors.navy, width: 1.5),
       ),
     );
   }
@@ -466,14 +447,14 @@ class _RouteConnector extends StatelessWidget {
     return Row(
       children: [
         SizedBox(
-          width: AppSpacing.lg + 28,
+          width: 22,
           child: Column(
             children: List.generate(
               3,
               (_) => Container(
-                height: 3,
-                width: 3,
-                margin: const EdgeInsets.symmetric(vertical: 1.5),
+                height: 2.5,
+                width: 2.5,
+                margin: const EdgeInsets.symmetric(vertical: 1),
                 decoration: const BoxDecoration(
                   color: AppColors.textDisabled,
                   shape: BoxShape.circle,
@@ -482,8 +463,8 @@ class _RouteConnector extends StatelessWidget {
             ),
           ),
         ),
+        const SizedBox(width: AppSpacing.md),
         const Expanded(child: Divider(height: 1)),
-        const SizedBox(width: AppSpacing.lg),
       ],
     );
   }
@@ -496,28 +477,17 @@ class _InlineError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.md,
-        vertical: AppSpacing.sm + 2,
-      ),
-      decoration: BoxDecoration(
-        color: AppColors.error.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline, size: 16, color: AppColors.error),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(color: AppColors.error, fontSize: 13),
-            ),
+    return Row(
+      children: [
+        const Icon(Icons.error_outline, size: 15, color: AppColors.error),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(color: AppColors.error, fontSize: 13),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
