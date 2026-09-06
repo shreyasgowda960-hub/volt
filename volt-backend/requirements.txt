@@ -1,4 +1,8 @@
 fastapi==0.141.1
+# Required by FastAPI to parse multipart/form-data. Spec 017 uploads a
+# document file, and Form/File/UploadFile raise at import time without it.
+# Replaces nothing; FastAPI cannot read a multipart body on its own.
+python-multipart==0.0.32
 uvicorn[standard]==0.52.1
 sqlalchemy[asyncio]==2.0.51
 asyncpg==0.31.0

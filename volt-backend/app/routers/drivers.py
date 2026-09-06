@@ -1,17 +1,42 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import logging
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import _bearer, verify_token
 from app.database import get_db
-from app.driver_auth import get_current_driver
+from app.driver_auth import get_authenticated_driver, get_current_driver
 from app.models.booking import Booking, BookingStatus
 from app.models.driver import Driver
+from app.models.driver_document import DocumentType
 from app.schemas.booking import BookingResponse
 from app.schemas.driver import AvailabilityUpdate, DriverRegister, DriverResponse
+from app.schemas.driver_document import (
+    DriverDocumentResponse,
+    DriverDocumentsResponse,
+)
 from app.services import booking as booking_service
+from app.services import driver_verification
+from app.services.driver_verification import (
+    DocumentAlreadyPresent,
+    DocumentTooLarge,
+    UnsupportedDocumentFormat,
+)
 from app.services.fare import VehicleTypeNotFound, load_vehicle_type
+from app.services.storage import MAX_UPLOAD_BYTES, StorageError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/drivers", tags=["drivers"])
 
@@ -53,10 +78,10 @@ async def register_driver(
         name=payload.name,
         vehicle_number=payload.vehicle_number,
         vehicle_type_code=payload.vehicle_type_code,
-        # Decision for phase 1 (spec 008): auto-verify on registration.
-        # is_verified stays in the schema so a real verification step can
-        # flip it later without a migration.
-        is_verified=True,
+        # NOT verified. Spec 008 auto-verified here and spec 017 removed it:
+        # a new driver starts is_verified=False / verification_status=pending
+        # (both column defaults) and becomes verified only when a human
+        # approves their documents. Do not set either field here again.
     )
     db.add(driver)
     await db.commit()
@@ -64,9 +89,99 @@ async def register_driver(
     return DriverResponse.model_validate(driver)
 
 
+# get_authenticated_driver, NOT get_current_driver. An unverified driver must
+# be able to read their own profile — verification_status is what the driver
+# app routes on, and gating it on is_verified makes spec 017 circular: the
+# driver cannot learn they need to upload documents without being verified,
+# and cannot be verified without uploading documents.
 @router.get("/me", response_model=DriverResponse)
-async def get_me(driver: Driver = Depends(get_current_driver)) -> DriverResponse:
+async def get_me(
+    driver: Driver = Depends(get_authenticated_driver),
+) -> DriverResponse:
     return DriverResponse.model_validate(driver)
+
+
+@router.post(
+    "/me/documents",
+    response_model=DriverDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_document(
+    document_type: DocumentType = Form(...),
+    file: UploadFile = File(...),
+    document_number: str | None = Form(default=None),
+    driver: Driver = Depends(get_authenticated_driver),
+    db: AsyncSession = Depends(get_db),
+) -> DriverDocumentResponse:
+    """Upload one document. Unverified by definition — see get_me above."""
+    # Read once. The declared content type on the part is NOT consulted: it is
+    # caller-supplied, and driver_verification sniffs the actual bytes.
+    data = await file.read()
+
+    try:
+        document = await driver_verification.submit_document(
+            db,
+            driver,
+            document_type,
+            data,
+            document_number=(document_number or None),
+        )
+    except DocumentTooLarge as e:
+        logger.info("upload refused for driver %s: %d bytes", driver.id, e.size)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"That file is too large. The limit is "
+                f"{MAX_UPLOAD_BYTES // (1024 * 1024)}MB."
+            ),
+        )
+    except UnsupportedDocumentFormat:
+        logger.info("upload refused for driver %s: unrecognised bytes", driver.id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Upload a JPG, PNG or PDF.",
+        )
+    except DocumentAlreadyPresent as e:
+        # 409, not 422: nothing is wrong with the request, it is the state that
+        # refuses it. Same distinction as the booking lifecycle's 409s.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Your {e.document_type.value.replace('_', ' ')} is already "
+                "submitted. Wait for the review, or resubmit if it is rejected."
+            ),
+        )
+    except StorageError:
+        # 503, not 500: nothing is wrong with our code or the request, the
+        # upstream store refused. Deliberately NOT degraded the way routing is
+        # — a document upload that silently fails leaves a driver believing
+        # they submitted something.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not upload right now. Please try again.",
+        )
+
+    return DriverDocumentResponse.model_validate(document)
+
+
+@router.get("/me/documents", response_model=DriverDocumentsResponse)
+async def list_my_documents(
+    driver: Driver = Depends(get_authenticated_driver),
+    db: AsyncSession = Depends(get_db),
+) -> DriverDocumentsResponse:
+    """The driver's own documents, with status and any rejection reason.
+
+    NO SIGNED URLS. A driver does not need to re-read their own upload — they
+    took the photo — and issuing URLs here would widen the surface for no
+    gain. Signed URLs exist on the admin response only.
+    """
+    documents = await driver_verification.list_documents(db, driver.id)
+    return DriverDocumentsResponse(
+        verification_status=driver.verification_status,
+        documents=[
+            DriverDocumentResponse.model_validate(d) for d in documents
+        ],
+    )
 
 
 @router.patch("/me/availability", response_model=DriverResponse)

@@ -8,11 +8,23 @@ from app.database import get_db
 from app.models.driver import Driver
 
 
-async def get_current_driver(
+async def get_authenticated_driver(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
     db: AsyncSession = Depends(get_db),
 ) -> Driver:
-    """Verifies the Firebase ID token and returns the matching Driver row.
+    """Identity only: a valid token and a matching Driver row. NO verification
+    check.
+
+    This exists because spec 017 would otherwise be circular — a driver has to
+    read their own verification_status to know they must upload documents, and
+    has to upload documents to become verified. Gating those two paths on
+    is_verified means a pending driver can never reach the screen that would
+    let them stop being pending.
+
+    ONLY three routes may use this: GET /drivers/me, and the two document
+    endpoints. Everything a driver does that touches a booking or the job
+    board uses get_current_driver below, so the verification gate is exactly
+    where it has always been.
 
     Unlike get_current_user, this does NOT create a row on first sight —
     drivers must register explicitly (POST /drivers/register), because a
@@ -34,6 +46,23 @@ async def get_current_driver(
             detail="Not registered as a driver",
         )
 
+    return driver
+
+
+async def get_current_driver(
+    driver: Driver = Depends(get_authenticated_driver),
+) -> Driver:
+    """An authenticated AND VERIFIED driver. The gate for everything
+    operational.
+
+    Layered on get_authenticated_driver rather than duplicating the lookup, so
+    there is one place that resolves a token to a row and one place that
+    decides whether that row may work.
+
+    is_verified is derived from verification_status == approved as of spec 017;
+    before that it was hardcoded True at registration. This check did not
+    change shape, which was the point of keeping the column.
+    """
     if not driver.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -21,6 +21,7 @@ from app.models.booking import Booking
 from app.models.driver import Driver
 from app.models.user import User
 from app.schemas.booking import BookingResponse
+from helpers import approve_driver_via_admin
 
 _BOOKING_PAYLOAD = {
     "pickup": {"address": "Koramangala", "lat": 12.9352, "lng": 77.6245},
@@ -72,9 +73,12 @@ async def _cleanup_driver(phone: str) -> None:
 
 async def _register_and_go_online(client, phone: str, uid: str) -> None:
     with _mock_token(uid, phone):
-        await client.post(
+        registered = await client.post(
             "/api/v1/drivers/register", json=_DRIVER_PAYLOAD, headers=_AUTH_HEADERS
         )
+        # Spec 017: registration no longer verifies. Approved through the
+        # REAL admin endpoint, so this fails if that path breaks.
+        await approve_driver_via_admin(client, registered.json()["id"])
         await client.patch(
             "/api/v1/drivers/me/availability",
             json={"is_online": True},

@@ -12,6 +12,7 @@ from app.database import Base
 from app.models import (  # noqa: F401
     booking,
     driver,
+    driver_document,
     place_coordinate,
     user,
     vehicle_type,

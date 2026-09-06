@@ -44,6 +44,23 @@ class Settings(BaseSettings):
     # the whole service down at import time.
     google_maps_api_key: str | None = None
 
+    # --- Admin review (spec 017) -----------------------------------------
+    # INTERIM, AND WEAK BY DESIGN. A single shared secret protecting the
+    # document review endpoints. It has NO AUDIT TRAIL — every action is
+    # "whoever had the token" — and it cannot be revoked for one person
+    # without revoking it for everyone, which at one reviewer means it cannot
+    # be revoked at all without a redeploy.
+    #
+    # Accepted because the alternative today is an admin user table and a
+    # login flow for a single person. It is replaced by real admin auth when
+    # the React dashboard arrives, or the moment a second person reviews
+    # documents — see docs/future-plans.md.
+    #
+    # Optional so the app still boots without it: the review endpoints answer
+    # 503 when it is unset rather than accepting every request, which is the
+    # failure direction that matters.
+    admin_review_token: str | None = None
+
     # Deployment: full service account JSON as a string. Takes precedence over
     # the file path when set, because there is no file system to write to.
     firebase_credentials_json: str | None = None

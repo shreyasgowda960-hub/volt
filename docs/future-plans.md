@@ -435,3 +435,119 @@ per app.
 **What waiting costs.** It grows with every screen added between now and then,
 since each one is another chance to hardcode a colour. Cheap to hold at
 today's screen count.
+
+---
+
+## 12. Storage bucket region: US-EAST1 → India
+
+**What we do today.** The Firebase Storage default bucket
+`volt-2b36f.firebasestorage.app` is in **US-EAST1**, production-mode rules,
+enabled 6 Sep 2026 for spec 017. Deliberate and forced: Mumbai
+(`asia-south1`) is not in the free tier.
+
+**Why it does not scale.** Driver licences and vehicle RCs are personal data
+belonging to Indian residents, and they will be sitting on servers in the
+United States. Two separate problems:
+
+1. *Legal.* This is the first data in VOLT with a retention obligation, and
+   cross-border storage is the adjacent question. Nothing today forbids it,
+   but a data-residency requirement is exactly the kind of thing that arrives
+   as a notification rather than a negotiation. Do not take this paragraph as
+   legal advice — the point of recording it is that the decision is already
+   made and cannot be revised later without work.
+2. *Latency.* Every upload from a driver's phone in Bengaluru crosses an
+   ocean, and so does every signed-URL read during review. Not a today
+   problem at one reviewer and a handful of drivers.
+
+**THE LOCATION IS PERMANENT.** A bucket's location cannot be changed after
+creation. This is not a setting to flip later; it is a new bucket.
+
+**What replaces it.** A second bucket in `asia-south1`, plus a migration:
+copy every object across, rewrite every `driver_documents.storage_path`, and
+cut over. The `storage_path` column holds a path rather than a URL precisely
+so that a bucket move rewrites one column and nothing else — see spec 017.
+
+**Trigger.** An Indian data-residency requirement under the DPDP Act — a
+government notification restricting transfers, or a client, insurer or
+regulator who requires it in writing.
+
+**Rough size.** A new bucket plus a migration. Small while the bucket holds a
+dozen documents; it is the object copy that grows, not the code.
+
+**What waiting costs.** It grows with every document uploaded, because the
+migration is proportional to the number of objects. Cheap now, and it is the
+one entry in this file where waiting has a strictly increasing price.
+
+---
+
+## 13. Aadhaar and identity verification
+
+**NOT COLLECTED, and this is a decision rather than an omission.** Spec 017
+collects a driving licence and a vehicle RC. There is no `aadhaar` value in
+the `DocumentType` enum and a test asserts its absence, so adding one is a
+deliberate act that fails the suite first.
+
+**What we do today.** Licence and RC, reviewed by a human. They prove the two
+things that actually matter for goods delivery: that the person may drive, and
+that the vehicle is theirs.
+
+**Why we do not go further.** Storing Aadhaar numbers or scanned copies places
+a private entity under the Aadhaar Act and UIDAI's data security regulations —
+masking obligations, purpose-specific consent in the driver's own language,
+enforced retention limits, a Grievance Officer, and breach reporting to UIDAI
+alongside the Data Protection Board and CERT-In. That is a compliance
+programme, not a schema column.
+
+The lawful route is **authentication rather than collection**: DigiLocker, or
+eKYC through a licensed AUA/KUA. Third-party shortcuts offering Aadhaar
+verification without that licensing have been actively blocked, which is
+itself the signal.
+
+And it would not buy what it looks like it buys. Aadhaar proves neither that
+someone may drive nor that a vehicle is theirs.
+
+**Trigger.** All three of: a registered business entity, a published privacy
+policy, and a DigiLocker or licensed-intermediary pathway. Legal advice before
+any of it — nothing in this file is legal advice.
+
+**Rough size.** `TBD — owner decision`. It is an integration plus a compliance
+posture, not a feature.
+
+**What waiting costs.** Nothing. Manual review of a licence is slower per
+driver and completely lawful.
+
+---
+
+## 14. Admin review token → real admin authentication
+
+**What we do today.** The document review endpoints are protected by a single
+shared secret in `ADMIN_REVIEW_TOKEN`, sent as `X-Admin-Token` and compared
+with `hmac.compare_digest`. An unset token returns 503 rather than opening the
+endpoints.
+
+**Why it does not scale.** Three specific things, none of which matter at one
+reviewer and all of which matter at two:
+
+1. *No audit trail.* Every approval is "whoever had the token". `reviewed_by`
+   is free text supplied by the caller, so it records a claim, not an identity.
+   These endpoints can make an unverified driver able to carry goods.
+2. *No per-person revocation.* Revoking for one person revokes for everyone,
+   and needs a redeploy to rotate.
+3. *No expiry*, and it sits in an environment variable on Render.
+
+**What replaces it.** Real admin authentication with per-person identity, so
+`reviewed_by` records who rather than what was claimed. Likely Firebase Auth
+with a custom claim, reusing the token verification already in `app/auth.py`
+rather than inventing a second auth model.
+
+**Trigger.** A second person reviewing documents, or the React dashboard —
+whichever comes first. The first is the sharper one: the moment two people
+share this token, the audit trail is not weak, it is absent.
+
+**Rough size.** `TBD — owner decision`. Smaller than it sounds if it reuses
+Firebase: an admin claim, a dependency alongside `get_current_driver`, and a
+real `reviewed_by`.
+
+**What waiting costs.** Nothing structural. But every approval made under the
+shared token is an unattributable record, and those do not become attributable
+later.

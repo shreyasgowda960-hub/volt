@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// VOLT Firebase Storage rules — spec 017.
+//
+// DENY EVERYTHING. There is no client path to Storage at all: not read, not
+// write, not for an authenticated driver reading their own licence.
+//
+// Why total denial rather than owner-scoped access:
+//
+//  * Uploads go through the backend with the service account, which sniffs the
+//    actual bytes before storing. A client that can write can usually be made
+//    to write something else, and nothing server-side would have validated it.
+//  * Reads happen through short-lived signed URLs the backend issues to the
+//    reviewer (15 minutes — app/services/storage.py SIGNED_URL_TTL). A driving
+//    licence must not be readable by anyone holding a URL indefinitely, and
+//    "hard to guess" is not a control.
+//  * A driver has no reason to re-read their own upload: they took the photo.
+//    Allowing it would widen the surface for no gain, so
+//    GET /drivers/me/documents deliberately returns status without URLs.
+//
+// The Admin SDK BYPASSES these rules entirely — it authenticates as the
+// service account, not as a Storage client. So denying everything here costs
+// the backend nothing, which is exactly why it is affordable.
+//
+// If a future feature seems to need client access, that is the moment to
+// re-read this comment rather than to add an `allow` line.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Driver documents: licences and vehicle RCs. The most sensitive data
+    // VOLT holds, and under the DPDP Act it carries a retention obligation —
+    // see app/services/driver_verification.delete_all_documents.
+    match /driver-documents/{driverId}/{documentType}/{objectId} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    // Catch-all. Nothing else should exist in this bucket yet, and anything
+    // that appears later starts denied rather than inheriting an accident.
+    match /{allPaths=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

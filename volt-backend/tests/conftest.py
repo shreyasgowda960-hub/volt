@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
+from app.config import get_settings
 from app.database import engine
 from app.services.booking import reset_expiry_throttle
 from app.services.place_cache import reset_purge_throttle
@@ -89,3 +90,68 @@ async def _dispose_engine_after_test():
     connection from a now-closed loop and blows up."""
     yield
     await engine.dispose()
+
+
+class _FakeStorageService:
+    """Stands in for Firebase Storage in every test (spec 017).
+
+    A spend guard AND a correctness guard. Documents are the most sensitive
+    data VOLT holds, so the suite must never put a test fixture into the real
+    bucket — an orphaned "licence" in production storage is not something a
+    green test run should be able to create.
+
+    Records calls so tests can assert on the path convention without a
+    network round trip.
+    """
+
+    def __init__(self) -> None:
+        self.uploaded: dict[str, tuple[int, str]] = {}
+        self.deleted: list[str] = []
+
+    async def upload(self, path: str, data: bytes, content_type: str) -> None:
+        self.uploaded[path] = (len(data), content_type)
+
+    async def signed_url(self, path: str) -> str:
+        # Recognisable and obviously fake, so a real URL leaking into a test
+        # expectation is visible at a glance.
+        return f"https://storage.test.invalid/{path}?signed=fake"
+
+    async def delete(self, path: str) -> None:
+        self.deleted.append(path)
+        self.uploaded.pop(path, None)
+
+
+# One instance per test, so a test can inspect what was stored.
+fake_storage = _FakeStorageService()
+
+
+@pytest.fixture(autouse=True)
+def _block_outbound_storage():
+    """Nothing in the suite may touch Firebase Storage for real.
+
+    Patched at default_storage_service — the single seam every caller goes
+    through. Do NOT patch a from-imported copy: that is exactly how the
+    routing spend guard silently failed, letting 49 tests hit a live billable
+    API while the suite looked green.
+    """
+    global fake_storage
+    fake_storage = _FakeStorageService()
+    with patch(
+        "app.services.storage.default_storage_service",
+        lambda: fake_storage,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _admin_token(monkeypatch):
+    """A known review token for the admin endpoint tests.
+
+    Set through the environment and with the settings cache cleared, because
+    get_settings is lru_cached — patching the env alone would be read once
+    per process and every later test would see whatever the first one left.
+    """
+    monkeypatch.setenv("ADMIN_REVIEW_TOKEN", "test-admin-token")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()

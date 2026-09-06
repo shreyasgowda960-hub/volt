@@ -9,6 +9,7 @@ from app.main import app
 from app.models.booking import Booking
 from app.models.driver import Driver
 from app.models.user import User
+from helpers import approve_driver_via_admin
 
 _REGISTER_PAYLOAD = {
     "name": "Test Driver",
@@ -60,7 +61,7 @@ async def _cleanup_user(phone: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_register_creates_verified_offline_driver():
+async def test_register_creates_unverified_offline_driver():
     phone = "+919000007001"
     await _cleanup_driver(phone)
 
@@ -75,7 +76,13 @@ async def test_register_creates_verified_offline_driver():
 
     assert resp.status_code == 201
     data = resp.json()
-    assert data["is_verified"] is True
+    # Spec 017 INVERTED this. Registration used to hardcode is_verified=True,
+    # which meant any phone number could register and immediately claim jobs.
+    # A new driver is now unverified and pending until a human approves their
+    # documents. If this ever goes back to True, the whole verification gate
+    # is decorative.
+    assert data["is_verified"] is False
+    assert data["verification_status"] == "pending"
     assert data["is_online"] is False
 
     await _cleanup_driver(phone)
@@ -143,11 +150,15 @@ async def test_availability_toggle_on_and_off():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with _mock_token("uid-avail-1", phone):
-            await client.post(
+            registered = await client.post(
                 "/api/v1/drivers/register",
                 json=_REGISTER_PAYLOAD,
                 headers=_AUTH_HEADERS,
             )
+            # Spec 017: registration no longer verifies. Approved through the
+            # REAL admin endpoint rather than by writing the column, so this
+            # test fails if the approval path breaks.
+            await approve_driver_via_admin(client, registered.json()["id"])
             online = await client.patch(
                 "/api/v1/drivers/me/availability",
                 json={"is_online": True},
@@ -177,11 +188,15 @@ async def test_going_offline_with_active_booking_returns_409():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with _mock_token("uid-avail-active", driver_phone):
-            await client.post(
+            registered = await client.post(
                 "/api/v1/drivers/register",
                 json=_REGISTER_PAYLOAD,
                 headers=_AUTH_HEADERS,
             )
+            # Spec 017: registration no longer verifies. Approved through the
+            # REAL admin endpoint rather than by writing the column, so this
+            # test fails if the approval path breaks.
+            await approve_driver_via_admin(client, registered.json()["id"])
             await client.patch(
                 "/api/v1/drivers/me/availability",
                 json={"is_online": True},
@@ -224,11 +239,15 @@ async def test_jobs_requires_online_and_filters_by_vehicle_type():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with _mock_token("uid-jobs-offline", driver_phone):
-            await client.post(
+            registered = await client.post(
                 "/api/v1/drivers/register",
                 json=_REGISTER_PAYLOAD,
                 headers=_AUTH_HEADERS,
             )
+            # Spec 017: registration no longer verifies. Approved through the
+            # REAL admin endpoint rather than by writing the column, so this
+            # test fails if the approval path breaks.
+            await approve_driver_via_admin(client, registered.json()["id"])
             offline_jobs = await client.get(
                 "/api/v1/drivers/jobs", headers=_AUTH_HEADERS
             )

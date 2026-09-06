@@ -9,6 +9,7 @@ from app.main import app
 from app.models.booking import Booking, BookingStatus
 from app.models.driver import Driver
 from app.models.user import User
+from helpers import approve_driver_via_admin
 
 _BOOKING_PAYLOAD = {
     "pickup": {"address": "Koramangala", "lat": 12.9352, "lng": 77.6245},
@@ -133,11 +134,14 @@ async def _cleanup_driver(phone: str) -> None:
 
 async def _register_and_go_online(client, phone: str, uid: str) -> None:
     with _mock_token(uid, phone):
-        await client.post(
+        registered = await client.post(
             "/api/v1/drivers/register",
             json=_DRIVER_REGISTER_PAYLOAD,
             headers=_AUTH_HEADERS,
         )
+        # Spec 017: registration no longer verifies. Approved through the
+        # REAL admin endpoint, so this fails if that path breaks.
+        await approve_driver_via_admin(client, registered.json()["id"])
         await client.patch(
             "/api/v1/drivers/me/availability",
             json={"is_online": True},
@@ -215,11 +219,14 @@ async def test_accept_vehicle_type_mismatch_returns_422():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with _mock_token("uid-mismatch-driver", driver_phone):
-            await client.post(
+            registered = await client.post(
                 "/api/v1/drivers/register",
                 json={**_DRIVER_REGISTER_PAYLOAD, "vehicle_type_code": "mini_truck"},
                 headers=_AUTH_HEADERS,
             )
+            # Spec 017: registration no longer verifies. Approved through the
+            # REAL admin endpoint, so this fails if that path breaks.
+            await approve_driver_via_admin(client, registered.json()["id"])
             await client.patch(
                 "/api/v1/drivers/me/availability",
                 json={"is_online": True},
@@ -254,11 +261,14 @@ async def test_accept_offline_driver_returns_403():
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         with _mock_token("uid-offline-driver", driver_phone):
             # Registered but never goes online.
-            await client.post(
+            registered = await client.post(
                 "/api/v1/drivers/register",
                 json=_DRIVER_REGISTER_PAYLOAD,
                 headers=_AUTH_HEADERS,
             )
+            # Spec 017: registration no longer verifies. Approved through the
+            # REAL admin endpoint, so this fails if that path breaks.
+            await approve_driver_via_admin(client, registered.json()["id"])
 
         with _mock_token("uid-offline-customer", customer_phone):
             created = await client.post(

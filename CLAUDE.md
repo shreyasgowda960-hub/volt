@@ -802,6 +802,104 @@ removed by flood-filling inward from the border, NOT by luminance — the truck
 cab in the logo is genuinely white, and a luminance key punches a hole through
 it.
 
+Driver document verification (spec 017). Backend done; the driver app half is
+NOT built yet — see Known gaps.
+
+is_verified IS NOW DERIVED, NOT SET AT REGISTRATION. Before 017,
+POST /drivers/register hardcoded is_verified=True, so any phone number could
+register and immediately claim jobs. Registration now leaves a driver
+is_verified=False / verification_status=pending, and only the admin approve
+endpoint sets the flag. Do not set either field anywhere else — they must
+never disagree.
+
+The state machine LOOPS, unlike the booking lifecycle:
+pending -> submitted -> approved | rejected, and rejected -> submitted on
+resubmission. A blurry photo is not a terminal judgement on a person, so a
+state machine that could not loop would force a new driver record to fix one
+bad upload.
+
+`submitted` requires BOTH documents. A driver with only a licence stays
+`pending`, otherwise the reviewer opens the queue and finds nothing to review.
+DocumentStatus deliberately has no `pending` value: a row exists only once
+something was uploaded, so driver-level pending ("nothing uploaded") and
+document-level submitted are different facts.
+
+THE AUTH DEPENDENCY IS SPLIT, AND THE SPEC AS WRITTEN WAS CIRCULAR WITHOUT IT.
+get_authenticated_driver resolves a token to a row and checks nothing else;
+get_current_driver layers the is_verified gate on top and still guards every
+operational endpoint. Only three routes use the unverified-tolerant one:
+GET /drivers/me and the two document endpoints. Without that split a pending
+driver could not read their own verification_status, so the app could never
+route them to the upload screen — they would have to be verified to discover
+they were not verified.
+
+STORAGE DENIES ALL CLIENT ACCESS. volt-backend/storage.rules is
+`allow read/write: if false` on everything, including for the driver who owns
+the document. Uploads go through the backend with the service account, which
+sniffs the actual bytes; reads happen through backend-issued signed URLs. The
+Admin SDK bypasses rules entirely, so total denial costs the backend nothing.
+A client that can write can usually be made to write elsewhere, and nothing
+server-side would have validated what landed.
+
+Content type is sniffed from the LEADING BYTES, never the declared header —
+that header is caller-supplied, so a .exe can announce itself as image/jpeg.
+JPEG, PNG and PDF only. Size cap 10MiB: phone cameras produce 2-8MB JPEGs and
+a cap that rejects a real photo is worse than none, because the driver cannot
+proceed and has no idea why.
+
+Path convention `driver-documents/{driver_id}/{document_type}/{uuid}`. The
+uuid means a resubmission never overwrites the rejected original, which is the
+whole point if a rejection is ever disputed. storage_path stores a PATH, not a
+URL — URLs expire, and a path keeps a future bucket move to a one-column
+rewrite (future-plans §12; the bucket is US-EAST1 permanently).
+
+Signed URLs expire in 15 MINUTES and appear on the ADMIN response only. Since
+the rules deny client reads, a signed URL is the only way to see an image, so
+it must not outlive the review sitting it was issued for. A driver does not
+need to re-read their own upload — they took the photo — so
+GET /drivers/me/documents returns status and rejection reasons with no URLs
+and no storage_path. Enforced by a test AND a grep, same shape as the
+driver-sees-no-customer-data assertion in spec 011.
+
+Upload order is UPLOAD FIRST, THEN WRITE THE ROW. A row pointing at a missing
+object shows the reviewer a broken record; an object with no row is invisible
+to everyone. Orphaned objects on a failed row write are accepted debt, and the
+retention sweep walks rows, so an orphan would survive account closure.
+
+ADMIN_REVIEW_TOKEN is INTERIM AND WEAK, deliberately. One shared secret, sent
+as X-Admin-Token, compared with hmac.compare_digest. No audit trail (every
+approval is "whoever had the token"; reviewed_by is a caller-supplied claim,
+not an identity), no per-person revocation, no expiry. Unset gives 503, never
+an open endpoint — a misconfigured deploy must refuse everyone rather than
+expose every driver's licence. Replaced the moment a second person reviews
+documents, or when the dashboard arrives: future-plans §14.
+
+RETENTION IS PART OF THIS SPEC, NOT A LATER CLEANUP. Under the DPDP Act
+personal data is retained for the purpose it was collected for and deleted
+when that purpose ends; indefinite storage is not a lawful default. These are
+licences and vehicle registrations — the most sensitive data VOLT holds.
+driver_verification.delete_all_documents deletes objects then rows and resets
+the driver to pending, exposed as DELETE /admin/drivers/{id}/documents. Not
+scheduled: it exists and is callable, and account closure calls it.
+
+AADHAAR IS NOT COLLECTED and there is a test asserting the enum has no such
+value, so adding one fails the suite first. Storing it places a private entity
+under the Aadhaar Act and UIDAI's regulations; the lawful route is
+authentication (DigiLocker, licensed AUA/KUA) rather than collection. Licence
+and RC prove what matters for goods delivery — that the person may drive and
+the vehicle is theirs. Aadhaar proves neither. See future-plans §13.
+
+python-multipart is a new dependency, forced by the spec's own multipart
+upload: FastAPI's Form/File/UploadFile raise at import time without it. It
+replaces nothing. Firebase Storage needed no new dependency — firebase-admin
+already bundles google-cloud-storage.
+
+Tests never touch Storage. conftest's autouse _block_outbound_storage patches
+app.services.storage.default_storage_service — through the MODULE, for the
+same reason as the routing guard. Tests that need a verified driver approve
+through the REAL admin endpoint (tests/helpers.py), not by writing the column,
+so they break if the approval path breaks.
+
 ## Planned, not built
 
 Moved to docs/future-plans.md on 5 Sep 2026 — deferred decisions live there
@@ -814,6 +912,18 @@ depends on. Its three consequences — a time-based fare component, waiting
 charges, and proximity matching — are future-plans §7, §8 and §9.
 
 Known gaps:
+- SPEC 017'S DRIVER APP HALF IS NOT BUILT. The backend is complete and
+  tested, but the driver app still has three-state routing (signed out /
+  no profile / registered) and no way to upload a document. A driver who
+  registers now lands on the error screen, because driverProfileProvider gets
+  a profile it has no screen for. So verification is enforced on the server
+  and unreachable from the app: nobody who is not already grandfathered can
+  become a driver. Needs spec 017 step 5 — DocumentUploadScreen,
+  PendingReviewScreen, the fourth routing state, image_picker, and a
+  multipart method on ApiClient (there is none today).
+  Also unapplied: volt-backend/storage.rules exists in the repo but has not
+  been pushed to the Firebase console, so the bucket is still on whatever
+  production-mode default it was created with.
 - THE APP CANNOT FUNCTION WITHOUT GOOGLE. Found on device 5 Sep 2026 by
   blanking GOOGLE_MAPS_API_KEY: autocomplete 502s, and dropping a pin fails
   too because reverse geocoding is also a Google call. No address-entry path degrades, so
