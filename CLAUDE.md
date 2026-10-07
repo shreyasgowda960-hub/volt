@@ -164,25 +164,59 @@ Both apps' google-services.json IS tracked, deliberately: client identifiers,
 not secrets — they ship inside every compiled APK, and ignoring the file
 breaks a fresh clone's build. Don't re-add an ignore rule for it.
 
-SMS, as configured today. Phone sign-in is enabled for REAL numbers, so every
-OTP is a billed message, not a test code:
-- SMS region policy: ALLOWLIST, India only, set 5 Sep 2026. This is the whole
-  of our SMS abuse protection right now.
+SMS. REAL NUMBERS ARE ENABLED IN FIREBASE AND REAL SMS STILL DOES NOT WORK.
+Both halves matter: the console setting is on, so it is tempting to read this
+as "we are live and billing", and we are not. Test numbers remain the only
+path that signs in.
+
+Two independent failures, and app verification needs only one to pass:
+- Play Integrity fails 18002 on the debug-signed APK. The attestation is
+  keyed to a signing certificate Google recognises, and ours is the throwaway
+  debug key.
+- The reCAPTCHA fallback fails API_KEY_ANDROID_APP_BLOCKED. The Android API
+  key is application-restricted, the fallback runs in a browser, and a
+  browser sends no package name — so the restriction that is correct for the
+  Maps SDK rejects it by design.
+
+SPEND EXPOSURE TODAY IS ZERO, because no SMS is ever sent. The $0.07 per
+message, the 1000/day default quota and the ~$70/day of exposure are all REAL
+but DORMANT; they start the day Play Integrity begins succeeding, which means
+the day the app is signed with a key registered in Play Console internal
+testing. Do not treat that as a distant event — it is one upload away, and it
+flips the SMS risk on without a line of code changing.
+
+SPEC 013 PART B IS THEREFORE ON THE CRITICAL PATH, not optional polish. Its
+deferral note below says "nothing is blocked meanwhile", which WAS true when
+written and is not now: real SMS is blocked on release signing. Read the two
+together.
+
+Still true, and still the whole of our abuse protection for the day SMS does
+start working:
+- SMS region policy: ALLOWLIST, India only, set 5 Sep 2026.
 - India SMS is $0.07 per message (Google Identity Platform pricing, confirmed
   5 Sep 2026).
-- Default sent-SMS quota is 1000/day, which at that rate is about $70/day of
-  exposure.
 - reCAPTCHA SMS defense is NOT configured; the site keys do not exist. The
   region policy stops foreign-number SMS pumping but nothing stops a bot
-  hammering Indian numbers. That is fine while distribution is sideloaded
-  APKs to known people and must be fixed before any public release — see
-  docs/future-plans.md.
+  hammering Indian numbers — see docs/future-plans.md §5.
 
 Deployed: backend live at https://volt-api-951s.onrender.com (Render free
-plan). Pushing to main auto-deploys to production, ~2 min. Render's free
-Postgres expires ~30 days after creation (created 2026-08-08) — check the
-Render dashboard for the exact date. When it expires, schema and seed data
-rebuild fine from migrations, but all bookings and users are lost.
+plan). Pushing to main auto-deploys to production, ~2 min.
+
+THE FIRST FREE POSTGRES EXPIRED AND WAS DELETED. This is no longer a warning,
+it has happened once: the instance created 2026-08-08 is gone with every
+booking and user in it. A new free instance was created on 2026-10-07,
+DATABASE_URL updated, migrations rebuilt the schema; /health is ok and
+/vehicle-types returns three rows. The database is LIVE AND EMPTY.
+
+THE ~30-DAY CLOCK RESTARTED on 2026-10-07, so this recurs in early November
+unless the database moves off the free tier first — future-plans §15. It is a
+dated item now, not a hypothetical.
+
+One consequence to remember: spec 017's migration carries a one-time
+grandfathering clause that sets pre-017 drivers to approved, and on this
+database it will find NO ROWS. Every driver is now a real driver who has to
+upload documents and be approved — including the owner's own test driver.
+There is no grandfathered account left anywhere.
 
 Driver endpoints (spec 008, merged to main and live in production):
 drivers/{register,me,me/availability,jobs,bookings} and
@@ -1043,20 +1077,33 @@ Known gaps:
   than by time (see Expiry above for the mechanism). Moved to
   docs/future-plans.md §10 — it was a deferral with no observable trigger.
 - Release APKs are debug-signed for both apps — neither can go to the Play
-  Store until there's a real signing config. This is spec 013 Part B, and it
-  is DEFERRED on purpose rather than pending:
-  * The upload key is permanent in effect. Android only installs updates
-    signed by the same key, so it wants creating when there is a real upload
-    to verify against and the whole flow — keystore, Play App Signing, and
-    the third fingerprint Google's own app-signing key adds — can be done and
-    checked in one sitting. Generating it months early means a key and a
-    password to look after with nothing depending on them yet.
-  * Nothing is blocked meanwhile. Sideloaded debug-signed APKs install and
-    run fine, which is the only distribution happening today.
+  Store until there's a real signing config. This is spec 013 Part B, and IT
+  IS NO LONGER A DEFERRAL. It is the blocker on real SMS: Play Integrity
+  fails 18002 against the debug key, so no real number can receive an OTP,
+  and the reCAPTCHA fallback is blocked separately (see the SMS section).
+  Test numbers are the only working sign-in path until this is done.
+  * The original "nothing is blocked meanwhile" reasoning is DEAD. It was
+    true while sideloading to known people was the whole distribution story,
+    and it stopped being true the moment real-number sign-in became something
+    we needed. Recorded rather than deleted because the reasoning was sound
+    on its own terms — what changed was the premise, not the logic.
+  * Still true, and still the thing to get right: the upload key is permanent
+    in effect. Android only installs updates signed by the same key, so the
+    whole flow — keystore, Play App Signing, and the third fingerprint
+    Google's own app-signing key adds — wants doing and checking in one
+    sitting.
   * Half-doing it is worse than not starting. A release build signed with a
     new upload key has a DIFFERENT SHA-1, and Firebase phone auth silently
     fails until that fingerprint is added — so set up and left untested it
-    would look finished and break precisely when it mattered.
+    would look finished and break precisely when it mattered. Note what this
+    means in the new order: signing is what UNBLOCKS phone auth for real
+    numbers, and a half-done signing setup is also what BREAKS it. Same
+    change, both directions, so verify sign-in on a real number immediately
+    after the first signed build.
+  * And it turns the SMS spend on. Exposure is zero today only because no SMS
+    is sent; a working Play Integrity means $0.07 a message against a
+    1000/day quota, with the India allowlist as the only protection. Do
+    future-plans §5 in the same stretch of work, not afterwards.
 - Rate limiting covers /estimate only, per IP, in process (see above). The
   Places proxy endpoints, every driver and booking endpoint, and per-user
   limits generally are all still uncapped, and the counter silently stops

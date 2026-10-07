@@ -187,12 +187,23 @@ nothing is.
 ## 5. SMS abuse protection → reCAPTCHA SMS defense
 
 Important before any public release. Not urgent now, and the reason it is not
-urgent is a fact about distribution rather than about the code.
+urgent is a fact about distribution rather than about the code — but the date
+that reason expires is EARLIER than this entry originally assumed. See the
+trigger.
 
 **What we do today.** Not configured — the reCAPTCHA site keys do not exist.
 Abuse protection is the SMS region policy alone (allowlist, India only, set
 5 Sep 2026) plus the default 1000/day sent-SMS quota. See the SMS block under
 *Auth* in `../CLAUDE.md` for the current settings.
+
+**A diagnosed detail to carry into the implementation.** The reCAPTCHA
+*fallback* — the path Firebase takes when Play Integrity fails — currently
+dies with `API_KEY_ANDROID_APP_BLOCKED`. The cause is not missing site keys:
+the Android API key is application-restricted, the fallback runs in a browser,
+and a browser sends no package name, so the restriction rejects it. That
+restriction is correct for the Maps SDK and must not simply be loosened to
+make this work. Whoever implements this needs a key arrangement that satisfies
+both, and should expect the first attempt to fail the same way.
 
 **Why it does not scale.** The region policy and reCAPTCHA stop two different
 attacks, and we only have the first:
@@ -211,8 +222,22 @@ does not prevent it, and it is a daily bound rather than a total one.
 **What replaces it.** reCAPTCHA SMS defense, alongside the region policy
 rather than instead of it — that pairing is Google's own recommendation.
 
-**Trigger.** Before public Play Store release. **Also immediately** if either
-abuse signal appears:
+**Trigger.** **The first signed build that reaches Play Console internal
+testing** — NOT public release, which is what this entry said before the
+failure modes were actually diagnosed.
+
+The correction matters because it moves the date a long way forward. Real SMS
+does not work at all today: Play Integrity fails 18002 against the debug
+signing key, so no OTP is ever sent and spend exposure is genuinely zero. The
+moment the app is signed with a key registered in Play Console, Play Integrity
+starts succeeding, real SMS starts flowing, and the whole $70/day exposure
+above switches on — with the region allowlist as the only protection. Internal
+testing is enough to do that. Public release is not required.
+
+So this is coupled to spec 013 Part B (release signing) and should be done in
+the same stretch of work, not scheduled after it.
+
+**Also immediately** if either abuse signal appears:
 - SMS volume that does not match the known tester list.
 - Verification success rate below **75%** in any region — Google names that
   threshold as an abuse signal.
@@ -230,8 +255,11 @@ it moved too. Misconfiguration makes sign-in FAIL FOR REAL USERS, so this needs
 on-device verification, not just a green analyzer.
 
 **What waiting costs.** Nothing structural while distribution is sideloaded
-APKs to known people. The cost arrives with public installability, not
-gradually — which is why the trigger is an event and not a number.
+debug-signed APKs to known people — and nothing at all today, since no SMS can
+be sent. The cost arrives in one step, on the day signing lands, not
+gradually — which is why the trigger is an event and not a number. The danger
+is that the event is a routine-feeling one: uploading a build for testing, not
+launching.
 
 ---
 
@@ -551,3 +579,54 @@ real `reviewed_by`.
 **What waiting costs.** Nothing structural. But every approval made under the
 shared token is an unattributable record, and those do not become attributable
 later.
+
+---
+
+## 15. Render free Postgres → a database that does not expire
+
+**What we do today.** Production Postgres is a Render free instance. The free
+tier deletes the database roughly 30 days after creation — not suspends,
+deletes.
+
+**Why it does not scale.** It already failed once, which is why this entry is
+dated rather than hypothetical. The instance created 2026-08-08 expired and was
+deleted, taking every booking and user with it. A replacement was created
+2026-10-07, so the next deletion lands in **early November 2026**.
+
+Three things make it worse than "we lose test data":
+
+1. *The clock is invisible.* Nothing in the app, the logs or the deploy says
+   how many days are left. The only place the date exists is the Render
+   dashboard, and nobody checks a dashboard for a thing that has not broken
+   yet.
+2. *The rebuild looks like success.* Migrations recreate the schema and seed
+   the vehicle types, so `/health` is green and `/vehicle-types` returns three
+   rows on an empty database. A deployment that has silently lost all its data
+   presents exactly like a healthy one.
+3. *It now destroys driver verification state.* Since spec 017, a driver's
+   approval lives in `drivers.verification_status`. A deletion sets every
+   driver back to square one — documents gone from the database, objects
+   orphaned in Storage, and the one-time grandfathering clause in the 017
+   migration finds no rows to grandfather.
+
+**What replaces it.** A paid Postgres that does not expire — Render's own paid
+tier is the smallest change since `DATABASE_URL` is the only thing that moves,
+and Neon or Supabase are the usual alternatives if the bill argues. Whatever is
+chosen, set up automated backups at the same time: the failure this entry
+exists for is data loss, and an unexpiring database with no backups only
+narrows it.
+
+**Trigger.** The first of:
+- **Any real user data exists** — one booking from someone who is not us, one
+  approved driver who is not the owner. Before that the loss is annoying;
+  after it, it is someone else's delivery and someone else's uploaded licence.
+- **Early November 2026**, the next expiry. If nothing has moved by then, the
+  decision is being made by a timer rather than by us.
+
+**Rough size.** Small and almost entirely non-code: provision, update
+`DATABASE_URL` in Render, run migrations, re-seed. The work is remembering to
+do it, not doing it.
+
+**What waiting costs.** Measured, not estimated: one full dataset, already.
+Everything in the database at the moment of deletion, including — since 017 —
+driver approvals and the Storage objects their rows pointed at.

@@ -25,12 +25,28 @@ because it is fine at this size, it goes there in the same session.
 | Unpushed | specs 016 and 017 in full |
 | Backend tests | 215 passing |
 | Flutter | `volt_core` 8 tests; all three packages analyze clean |
-| Migration head | `f6afa0f7088f` (`driver_document_verification`) — **local only** |
+| Migration head (local) | `f6afa0f7088f` (`driver_document_verification`) |
+| Migration head (Render) | **unconfirmed — see below** |
+| Production database | rebuilt 7 Oct 2026, live and **empty** |
 
-**NOTHING SINCE 014 IS IN PRODUCTION.** Two specs are stacked on this branch —
-016 (theme, logo, splash) and 017 (driver verification) — and the 017 migration
-has never run against the Render database. Merging this to `main` auto-deploys
-both and runs that migration, so it wants the on-device walk first.
+**NO CODE SINCE 014 IS IN PRODUCTION.** Two specs are stacked on this branch —
+016 (theme, logo, splash) and 017 (driver verification) — and neither is
+deployed. Merging to `main` auto-deploys both.
+
+**Confirm which revision the rebuilt database is at before merging.** The new
+Render Postgres was created on 7 Oct and migrations were run against it, but
+which head they reached depends on the branch they were run from. Both answers
+are survivable and they are not the same:
+- At `afbcf9152650` (014), the merge deploys the 017 code and runs its
+  migration as part of the deploy — the normal path.
+- At `f6afa0f7088f` (017), the schema is already ahead of the deployed code.
+  That is harmless, because the 017 migration is additive, but it means the
+  grandfathering clause **has already run against an empty table** and will not
+  run again.
+
+Either way the result is the same and worth stating plainly: **no driver is
+grandfathered.** `alembic current` against the Render `DATABASE_URL` settles
+which case this is in one command.
 
 **SPEC 014 IS LIVE.** `feat/road-distance` was merged into `main` and pushed on
 5 Sep 2026, and pushing `main` auto-deploys, so all of it is in production:
@@ -334,7 +350,9 @@ throttled to once per 60s per process. If nobody calls the API, a booking sits
 bookings created minutes apart all received the same `expired_at`. Worse at low
 traffic, not better.
 
-**Release APKs are debug-signed.** Cannot go to Play Store. See spec 013 Part B.
+**Release APKs are debug-signed.** Cannot go to Play Store, and — the part that
+is new — this is what blocks real-number sign-in. See the SMS entry below and
+spec 013 Part B.
 
 **Zero Flutter tests.** 215 backend tests, none in either app beyond
 `volt_core`'s poller tests. Every screen change is verified by tapping through
@@ -353,24 +371,53 @@ use. Two things still gate a real driver:
 - Approval is a manual `POST` with `X-Admin-Token`. There is no admin UI by
   guardrail, so onboarding a driver is a two-person operation today.
 
-**Real SMS is ON, and reCAPTCHA is not.** Phone sign-in is enabled for real
-numbers as of 5 Sep 2026, so every OTP is a billed message at $0.07 (India,
-Google Identity Platform) against a default 1000/day quota — roughly $70/day of
-exposure. The SMS region policy is ALLOWLIST, India only, and that is the whole
-of the abuse protection: it stops foreign-number SMS pumping, and nothing stops
-a bot hammering Indian numbers, because the reCAPTCHA site keys do not exist.
-Acceptable while distribution is sideloaded APKs to known people. Must be fixed
-before any public release — `docs/future-plans.md` §5.
+**Real numbers are enabled in Firebase and real SMS does not work.** Both
+halves matter. The console setting is on, which reads like "we are live and
+billing"; no SMS is actually sent, and **test numbers remain the only working
+sign-in path.**
+
+App verification needs one of two checks to pass and both fail:
+- **Play Integrity — 18002** on the debug-signed APK. Attestation is keyed to
+  a signing certificate Google recognises, and ours is the throwaway debug key.
+- **reCAPTCHA fallback — `API_KEY_ANDROID_APP_BLOCKED`.** The Android API key
+  is application-restricted, the fallback runs in a browser, and a browser
+  sends no package name — so the restriction that is right for the Maps SDK
+  rejects it by design.
+
+**Spend exposure today is zero**, because nothing is sent. The $0.07 per
+message, the 1000/day quota and the ~$70/day are real but **dormant**. They
+switch on the day Play Integrity starts succeeding — which is the day the app
+is signed with a key registered in Play Console internal testing. That is one
+upload away, not a distant event, and it flips the SMS risk on without a line
+of code changing.
+
+So **spec 013 Part B is on the critical path**, not polish, and the old "nothing
+is blocked meanwhile" reasoning for deferring it is dead. When it lands, do
+`docs/future-plans.md` §5 (reCAPTCHA / abuse protection) in the same stretch of
+work — the region allowlist is the only protection that exists, and it stops
+foreign-number pumping but nothing stops a bot hammering Indian numbers.
 
 **No driver→customer contact.** Customers can call drivers; not the reverse. A
 driver at a locked gate cannot call. Masked two-way calling is the proper fix,
 phase 4.
 
-**Render free Postgres has probably already expired.** Created 8 Aug 2026 on a
-~30-day free window, which puts the date in early September — two months back
-from today. Check the Render dashboard before assuming any production data is
-still there. Schema and seed data rebuild from migrations; bookings and users
-do not.
+**Render free Postgres expired, was deleted, and has been rebuilt empty.** The
+instance created 8 Aug 2026 is gone, taking every booking and user with it. A
+new free instance was created 7 Oct 2026, `DATABASE_URL` updated, migrations
+rebuilt the schema; `/health` is ok and `/vehicle-types` returns three rows.
+
+The database is **live and empty**, which has one consequence worth holding on
+to: spec 017's migration carries a one-time grandfathering clause that sets
+pre-017 drivers to `approved`, and on this database it finds **no rows**. There
+is no grandfathered account left anywhere — including the owner's own test
+driver. Every driver from here is a real driver who uploads documents and waits
+for approval, which also means the 017 device walk is no longer optional before
+anyone can take a job.
+
+**The ~30-day clock restarted on 7 Oct 2026**, so this recurs in early November
+unless the database moves off the free tier first. It is a dated item now, not
+a hypothetical — see `docs/future-plans.md` §15. It has already cost the
+project one dataset.
 
 **Free trial ends 3 Dec 2026.** Maps APIs stop working unless the Cloud billing
 account is activated. Activating also removes the hard spending ceiling the
