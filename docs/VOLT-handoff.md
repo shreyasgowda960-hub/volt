@@ -350,6 +350,12 @@ throttled to once per 60s per process. If nobody calls the API, a booking sits
 bookings created minutes apart all received the same `expired_at`. Worse at low
 traffic, not better.
 
+**`FIREBASE_STORAGE_BUCKET` must be set in Render and in local `.env`.** New
+required setting as of 8 Oct 2026 — the backend now refuses to start without
+it, deliberately. Value: `volt-2b36f.firebasestorage.app`. It is in
+`.env.example`; a local checkout that has not copied it across will fail at
+startup with a message naming the variable.
+
 **The local Firebase service account key is revoked.** Google rejects it with
 `invalid_grant: Invalid JWT Signature`, found 8 Oct 2026. It looks healthy
 because `verify_id_token` never uses the private key — it checks Google's
@@ -513,6 +519,38 @@ about the thing rather than the thing.** `git log | grep secrets/` matching a
 commit message, an AndroidManifest grep matching a comment explaining why the
 permission is absent, and `grep -qU $'\x00'` matching every file because bash
 cannot hold a NUL.
+
+### An eighth: a guard that makes something safe to test can make it untestable
+
+Different from the seven above, and worth separating because the fix is not
+"write a better fixture" — there was no fixture at all, and no way to write one.
+
+Driver document upload failed in production with "Storage bucket name not
+specified" (8 Oct 2026). The bucket was never configured: the setting did not
+exist in `config.py` and `initialize_app()` was called with no options.
+Registration, `/drivers/me` and the documents list all worked, so the deploy
+looked healthy and the first person to find out was a driver pressing Upload.
+
+216 tests passed. They could not have failed. conftest's autouse
+`_block_outbound_storage` replaces `default_storage_service` wholesale, so no
+test constructs `FirebaseStorageService`, and `_blob()` — the single line that
+resolves the bucket name — is never executed by the suite.
+
+**The guard and the coverage were the same patch.** The guard is right and has
+to stay: a green test run must not be able to create an orphaned "licence" in
+production storage. But stubbing the seam that makes Storage safe also removed
+the only path that reads its configuration.
+
+Two things came out of it:
+- `tests/test_storage_config.py` asserts the configuration directly — no
+  network, no real client — so the thing the guard hides is covered elsewhere.
+- `verify_storage_configured()` runs in the lifespan handler. A missing bucket
+  name is fatal; an unreachable one only logs. See `CLAUDE.md` for why those
+  two differ, which is a fact about Render's cold starts, not a hedge.
+
+The habit: **when a guard stubs out a seam, ask what the guard just made
+unobservable, and cover that somewhere the guard does not reach.** "We can't
+test it because the fixture stubs it" is a finding, not an excuse.
 
 ### A seventh lesson, and a repeat offender
 

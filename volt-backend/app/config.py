@@ -61,6 +61,21 @@ class Settings(BaseSettings):
     # failure direction that matters.
     admin_review_token: str | None = None
 
+    # --- Firebase Storage (spec 017) -------------------------------------
+    # The bucket driver documents live in, e.g. volt-2b36f.firebasestorage.app.
+    #
+    # REQUIRED, and checked at startup rather than at first upload. It was
+    # neither until 8 Oct 2026: firebase_admin.initialize_app() was called
+    # with no options, so firebase_admin.storage.bucket() raised "Storage
+    # bucket name not specified" — but only when a driver actually uploaded,
+    # in production, after a deploy that looked completely healthy.
+    #
+    # NOT derived from the credentials' project_id even though the
+    # conventional name is {project_id}.firebasestorage.app. A derived bucket
+    # name is a guess, and a guess that is wrong points the one piece of
+    # genuinely sensitive data VOLT holds at a bucket nobody is watching.
+    firebase_storage_bucket: str | None = None
+
     # Deployment: full service account JSON as a string. Takes precedence over
     # the file path when set, because there is no file system to write to.
     firebase_credentials_json: str | None = None

@@ -881,6 +881,45 @@ JPEG, PNG and PDF only. Size cap 10MiB: phone cameras produce 2-8MB JPEGs and
 a cap that rejects a real photo is worse than none, because the driver cannot
 proceed and has no idea why.
 
+THE BUCKET NAME IS CONFIGURATION AND IT IS CHECKED AT STARTUP.
+FIREBASE_STORAGE_BUCKET (e.g. volt-2b36f.firebasestorage.app) is passed to
+firebase_admin.initialize_app as storageBucket; without it
+firebase_admin.storage.bucket() raises "Storage bucket name not specified".
+
+That shipped to production once, 8 Oct 2026. The setting did not exist in
+config.py at all and initialize_app was called with no options, so uploads
+failed in production while registration, /drivers/me and the documents list
+all worked — a deploy that looked completely healthy and was discovered by a
+driver pressing Upload. Half-working is the worst shape here: the driver gets
+through registration, is routed to the upload screen, and cannot finish.
+
+verify_storage_configured() now runs in the lifespan handler, same as the
+Firebase credentials check, with a DELIBERATE ASYMMETRY between its two halves:
+- A MISSING BUCKET NAME IS FATAL. Pure configuration, no network, same answer
+  every time. On Render a startup failure keeps the PREVIOUS deploy serving, so
+  this blocks the bad deploy rather than half-shipping it.
+- AN UNREACHABLE OR NON-EXISTENT BUCKET ONLY LOGS AT ERROR. Render's free plan
+  spins down when idle and runs lifespan again on EVERY COLD START, so a fatal
+  network probe would turn a momentary Google blip into an outage of the whole
+  API — bookings and fares included — rather than a failed deploy.
+
+The name is NOT derived from the credentials' project_id even though the
+convention is {project_id}.firebasestorage.app. A derived name is a guess, and
+a wrong guess points the most sensitive data VOLT holds at a bucket nobody is
+watching.
+
+THE SUITE'S OWN STORAGE GUARD IS WHY NOTHING CAUGHT THIS, and that is
+structural rather than an oversight. conftest's autouse _block_outbound_storage
+replaces default_storage_service wholesale, so no test constructs
+FirebaseStorageService and _blob() — the one line that resolves the bucket —
+never executes. The guard is correct and must stay; a green test run must not
+be able to create an orphaned licence in production storage. But the guard and
+the coverage are THE SAME PATCH, so making Storage safe to test also made it
+impossible to test. The fix is not to loosen the guard: it is
+tests/test_storage_config.py, which asserts the configuration directly with no
+network and no real client. Any future "we cannot test X because the guard
+stubs it" gets the same treatment.
+
 Path convention `driver-documents/{driver_id}/{document_type}/{uuid}`. The
 uuid means a resubmission never overwrites the rejected original, which is the
 whole point if a rejection is ever disputed. storage_path stores a PATH, not a
