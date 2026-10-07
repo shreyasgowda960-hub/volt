@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "RECORDED FROM REAL SERVERS. Do not hand-edit \u2014 regenerate.",
+    "GET /api/v1/drivers/me, valid token, uid with no drivers row.",
+    "Each entry is the literal response body a real FastAPI app returned",
+    "over a real HTTP request, not a body someone typed out.",
+    "Regenerate: see driver_app/test/README.md"
+  ],
+  "recorded_at": "2026-10-08",
+  "coded": {
+    "_what": "This branch, after the fix: detail is a string, code is a sibling.",
+    "revision": "5117651",
+    "status": 403,
+    "body": "{\"detail\":\"Not registered as a driver\",\"code\":\"driver_not_registered\"}"
+  },
+  "legacy": {
+    "_what": "The revision deployed to production when this bug was found. No `code` field at all - this is what broke routing.",
+    "revision": "dbe8cc6",
+    "status": 403,
+    "body": "{\"detail\":\"Not registered as a driver\"}"
+  }
+}

@@ -350,6 +350,16 @@ throttled to once per 60s per process. If nobody calls the API, a booking sits
 bookings created minutes apart all received the same `expired_at`. Worse at low
 traffic, not better.
 
+**The local Firebase service account key is revoked.** Google rejects it with
+`invalid_grant: Invalid JWT Signature`, found 8 Oct 2026. It looks healthy
+because `verify_id_token` never uses the private key — it checks Google's
+public certs — so auth, the endpoints and all 216 tests pass on a dead key.
+What breaks is outbound signing: Firebase Storage uploads and signed URLs,
+which is all of spec 017's document handling. Download a fresh key into
+`volt-backend/secrets/` before attempting the 017 device walk, and confirm
+Render holds a working one too, since the same failure would be just as quiet
+in production.
+
 **Release APKs are debug-signed.** Cannot go to Play Store, and — the part that
 is new — this is what blocks real-number sign-in. See the SMS entry below and
 spec 013 Part B.

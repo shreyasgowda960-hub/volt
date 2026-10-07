@@ -5,10 +5,39 @@ import '../../verification/domain/driver_document.dart';
 import '../domain/driver_profile.dart';
 import '../domain/vehicle_type_option.dart';
 
-/// The server's machine-readable reason on a driver-auth 403. Branch on these,
+/// The server's machine-readable reason on a driver-auth 403. Branch on this,
 /// never on the message — the message is prose shown to a person and may be
 /// reworded at any time. See app/driver_auth.py.
 const _kDriverNotRegistered = 'driver_not_registered';
+
+/// LEGACY FALLBACK, and it is load-bearing right now.
+///
+/// Servers older than spec 017 send no `code` at all, and the deployed backend
+/// is one of them until this branch merges. Without this the app reads a null
+/// code, fails the check below, and routes an unregistered driver to the
+/// error screen instead of the registration form — which is precisely the bug
+/// this constant exists to close, observed on a real device against
+/// production.
+///
+/// Substring-matching prose is as fragile as it looks; it is here because the
+/// alternative is worse, and because an app always has to tolerate a server
+/// older than itself. REMOVE IT once the coded backend has been deployed long
+/// enough that no older server can be reached — the server is one deployment,
+/// so the trigger is simply "017 is live in production".
+const _kLegacyNotRegisteredFragment = 'Not registered';
+
+/// True when a 403 means "this token has no driver row", by either the coded
+/// answer or the legacy one.
+///
+/// The legacy branch is deliberately gated on `code == null`. A server that
+/// DID send a code has already given its answer, and falling back to prose
+/// there would let an unrelated 403 whose message happened to contain the
+/// fragment be read as "not registered".
+bool _isNotRegistered(ApiException e) {
+  if (e.statusCode != 403) return false;
+  if (e.code != null) return e.code == _kDriverNotRegistered;
+  return e.message.contains(_kLegacyNotRegisteredFragment);
+}
 
 /// Thrown by [DriverRepository.me] when the token is valid but there is no
 /// drivers row for this uid yet — a routing signal (show registration), not
@@ -93,7 +122,7 @@ class RemoteDriverRepository implements DriverRepository {
       final json = await _api.get('/api/v1/drivers/me');
       return DriverProfile.fromJson(json);
     } on ApiException catch (e) {
-      if (e.statusCode == 403 && e.code == _kDriverNotRegistered) {
+      if (_isNotRegistered(e)) {
         throw const DriverNotRegistered();
       }
       rethrow;

@@ -75,10 +75,25 @@ class _ProfileGate extends ConsumerWidget {
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
       ),
+      // RETRY IS NOT ENOUGH ON ITS OWN, and that is not hypothetical: a
+      // routing bug once parked drivers here with a message that would never
+      // change no matter how many times they tapped it. Retry only helps a
+      // TRANSIENT failure; anything structural — a server older than the app,
+      // a token for an account in a state this build cannot read — is a
+      // permanent dead end with no way back to the phone entry screen.
+      //
+      // Sign out is the honest second action. It is the one escape that works
+      // without knowing what went wrong, because it returns to session == null
+      // and lets the driver start over.
+      //
+      // Deliberately NOT routing to registration on an unknown error. Guessing
+      // "you must not be registered" from a failure we could not classify
+      // would show the registration form to drivers who already have an
+      // account, and their attempt to register would 409.
       error: (error, _) => Scaffold(
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(AppSpacing.xl),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -87,10 +102,15 @@ class _ProfileGate extends ConsumerWidget {
                   style: const TextStyle(color: AppColors.textSecondary),
                   textAlign: TextAlign.center,
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.lg),
                 FilledButton(
                   onPressed: () => ref.invalidate(driverProfileProvider),
                   child: const Text('Retry'),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextButton(
+                  onPressed: () => ref.read(sessionProvider.notifier).signOut(),
+                  child: const Text('Sign out'),
                 ),
               ],
             ),

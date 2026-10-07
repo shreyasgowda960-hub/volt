@@ -7,6 +7,7 @@ from sqlalchemy import text
 from app.auth import init_firebase
 from app.config import get_settings
 from app.database import engine
+from app.errors import CodedHTTPException, coded_http_exception_handler
 from app.routers import admin, bookings, drivers, places, service_area, vehicle_types
 
 settings = get_settings()
@@ -33,6 +34,11 @@ app = FastAPI(
     docs_url="/docs",
     lifespan=lifespan,
 )
+
+# Renders a top-level `code` alongside `detail` for the errors that carry one.
+# Registered for the subclass only, so every other error keeps FastAPI's own
+# handler and the standard shape. See app/errors.py.
+app.add_exception_handler(CodedHTTPException, coded_http_exception_handler)
 
 app.include_router(bookings.router)
 app.include_router(drivers.router)

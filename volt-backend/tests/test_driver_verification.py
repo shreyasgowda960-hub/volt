@@ -148,7 +148,8 @@ async def test_unverified_driver_cannot_claim_a_job():
 
     assert jobs.status_code == 403
     assert accept.status_code == 403
-    assert accept.json()["detail"]["code"] == DRIVER_NOT_VERIFIED
+    assert accept.json()["code"] == DRIVER_NOT_VERIFIED
+    assert isinstance(accept.json()["detail"], str)
 
     await _cleanup(driver_phone)
     await _cleanup(customer_phone)

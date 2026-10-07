@@ -12,11 +12,17 @@ class ApiException implements Exception {
 
   /// A machine-readable reason, when the server sent one.
   ///
-  /// Almost every endpoint returns `detail` as a plain string and this stays
-  /// null. The exception is the two driver-auth 403s (spec 017), which the
-  /// driver app ROUTES on — branching on prose meant a copy-edit to a
-  /// user-facing sentence could silently change which screen a driver saw.
-  /// Branch on this when it is present; never on [message].
+  /// Arrives as a TOP-LEVEL sibling of `detail`, never in place of it, so a
+  /// server that does not send one simply leaves this null and [message] still
+  /// works. Only the two driver-auth 403s carry one today (spec 017), because
+  /// the driver app routes on which of them it got and branching on prose
+  /// meant a copy-edit to a user-facing sentence could change which screen a
+  /// driver saw.
+  ///
+  /// NEVER assume this is non-null just because the endpoint is meant to send
+  /// one. The apps ship independently of the backend, so an app newer than the
+  /// server it is talking to is routine — that exact skew put drivers on a
+  /// dead-end error screen once already.
   final String? code;
 
   bool get isUnauthorized => statusCode == 401;
@@ -155,40 +161,31 @@ class ApiClient {
           statusCode: status);
     }
 
-    // `detail` takes three shapes and all three are read here, so no caller
-    // has to know which one its endpoint sent:
-    //   - a plain string, almost everywhere;
-    //   - an object with `code` and `message`, on the two driver-auth 403s;
-    //   - a LIST of field errors, from FastAPI's own request validation,
-    //     which is for a developer and must never reach a driver.
-    final detail = e.response?.data is Map
-        ? (e.response!.data as Map)['detail']
-        : null;
+    final body = e.response?.data is Map ? e.response!.data as Map : null;
 
-    if (detail is Map) {
-      final message = detail['message'];
-      final code = detail['code'];
-      return ApiException(
-        message is String ? message : 'Something went wrong.',
-        statusCode: status,
-        code: code is String ? code : null,
-      );
-    }
+    // `detail` is ALWAYS a plain string when the server sends one, with the
+    // single exception of FastAPI's own request-validation errors, where it is
+    // a LIST of field errors meant for a developer and never for a driver.
+    final detail = body?['detail'];
+
+    // Optional sibling, absent on every server that predates it. Read
+    // defensively for exactly that reason.
+    final rawCode = body?['code'];
+    final code = rawCode is String ? rawCode : null;
 
     if (detail is String) {
-      return ApiException(detail, statusCode: status);
+      return ApiException(detail, statusCode: status, code: code);
     }
 
     // 422 used to be blanket-generic, which also swallowed the DELIBERATE
     // 422s — vehicle capacity, and spec 017's "Upload a JPG, PNG or PDF."
-    // Those carry a string detail and are handled above; only FastAPI's own
-    // validation list reaches here, and that one genuinely has nothing a
-    // user can act on.
+    // Those carry a string detail and are handled above; only the validation
+    // list reaches here, and that one genuinely has nothing a user can act on.
     if (status == 422) {
-      return const ApiException('Something in that request was invalid.',
-          statusCode: 422);
+      return ApiException('Something in that request was invalid.',
+          statusCode: 422, code: code);
     }
 
-    return ApiException('Something went wrong.', statusCode: status);
+    return ApiException('Something went wrong.', statusCode: status, code: code);
   }
 }

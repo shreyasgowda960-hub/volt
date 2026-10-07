@@ -1,11 +1,13 @@
 from unittest.mock import patch
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import delete
 
 from app.database import SessionLocal
+from app.main import app
 from app.driver_auth import (
     DRIVER_NOT_REGISTERED,
     DRIVER_NOT_VERIFIED,
@@ -54,7 +56,10 @@ async def test_valid_token_with_no_driver_row_raises_403():
 
         assert exc_info.value.status_code == 403
         # Assert on the CODE, not the prose. The app routes on this.
-        assert exc_info.value.detail["code"] == DRIVER_NOT_REGISTERED
+        assert exc_info.value.code == DRIVER_NOT_REGISTERED
+        # And detail stays a plain STRING. See app/errors.py: an object here
+        # breaks every already-sideloaded APK, which cannot be force-updated.
+        assert isinstance(exc_info.value.detail, str)
 
 
 @pytest.mark.asyncio
@@ -81,7 +86,8 @@ async def test_unverified_driver_raises_403():
                 await _resolve_current_driver(db)
 
         assert exc_info.value.status_code == 403
-        assert exc_info.value.detail["code"] == DRIVER_NOT_VERIFIED
+        assert exc_info.value.code == DRIVER_NOT_VERIFIED
+        assert isinstance(exc_info.value.detail, str)
 
         await _cleanup(db, phone)
 
@@ -149,3 +155,47 @@ async def test_same_uid_can_be_both_customer_and_driver():
         assert result.phone == phone
 
         await _cleanup(db, phone)
+
+
+@pytest.mark.asyncio
+async def test_not_registered_403_wire_shape_is_backward_compatible():
+    """The ON-THE-WIRE body, not the exception object.
+
+    This exists because of a real bug. Spec 017 first made `detail` an OBJECT
+    carrying the code, every test passed, and a driver with no profile landed
+    on the app's dead-end error screen against production — which was running
+    an older build that sent a plain string. The app had been changed to
+    require a field the deployed server did not send.
+
+    The shape that survives version skew in BOTH directions is a string
+    `detail` (what every already-shipped APK reads) plus a SIBLING `code` (what
+    a newer app branches on). An old app ignores the code; a new app tolerates
+    its absence. Assert both halves, because either one alone is the bug.
+    """
+    phone = "+919000005009"
+    uid = "test-driver-uid-wire-shape"
+
+    async with SessionLocal() as db:
+        await _cleanup(db, phone)
+
+    decoded = {"uid": uid, "phone_number": phone}
+    with patch("app.auth.firebase_auth.verify_id_token", return_value=decoded):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get(
+                "/api/v1/drivers/me",
+                headers={"Authorization": "Bearer pretend-token"},
+            )
+
+    assert response.status_code == 403
+    body = response.json()
+
+    # Half one: old apps substring-match this. It must stay a string.
+    assert isinstance(body["detail"], str), (
+        "detail must remain a plain string — sideloaded APKs cannot be "
+        "force-updated, and an object here breaks every one already installed"
+    )
+    assert body["detail"] == "Not registered as a driver"
+
+    # Half two: new apps route on this.
+    assert body["code"] == DRIVER_NOT_REGISTERED

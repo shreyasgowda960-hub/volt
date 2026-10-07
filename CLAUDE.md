@@ -945,21 +945,52 @@ ahead of the app should route a driver somewhere recoverable, and `approved`
 would be worse than wrong, dropping an unverified driver onto a job board
 where every call 403s.
 
-THE TWO DRIVER-AUTH 403s CARRY A MACHINE-READABLE CODE, and they are the only
-endpoints in VOLT whose `detail` is an object rather than a string:
-`{"code": ..., "message": ...}`, with codes driver_not_registered and
-driver_not_verified. This is a TOLERATED SHAPE, not a second error standard —
-everywhere else `detail` stays a plain string and ApiClient._translate reads
-both. It exists because the app ROUTES on the difference between those two
-403s and previously did so by substring-matching the prose, so rewording a
-user-facing sentence could have sent every registered driver back to the
-registration form. Branch on ApiException.code; never on its message.
+THE TWO DRIVER-AUTH 403s CARRY A MACHINE-READABLE CODE AS A SIBLING OF
+`detail`, NEVER IN PLACE OF IT:
+
+  {"detail": "Not registered as a driver", "code": "driver_not_registered"}
+
+`detail` keeps the exact human-readable string it has always had, so the error
+shape is unchanged and there is no exception to the one-consistent-shape
+convention. `code` is additive (app/errors.py, CodedHTTPException and its
+handler). Branch on ApiException.code; never on the message.
+
+THE FIRST ATTEMPT MADE `detail` AN OBJECT AND THAT WAS A REAL BUG, found on a
+device: a driver with no profile landed on the error screen instead of
+registration. THE APPS DEPLOY INDEPENDENTLY OF THE BACKEND, so an app and a
+server disagreeing about a contract is the NORMAL state, not an edge case, and
+replacing `detail` broke both directions of skew:
+
+- New app, old server: no `code` in the body, so the "not registered" check
+  failed and routing fell through to the error screen. This is what happened —
+  the app was on the branch, production was on dbe8cc6.
+- Old app, new server: worse, because no amount of shipping fixes it.
+  Sideloaded APKs are not force-updated. The old client read `detail` expecting
+  a string, got an object, and showed "Something went wrong."
+
+A sibling field survives both: an old app ignores it, a new app tolerates its
+absence. The rule generalises — ANY new field the app depends on must be
+additive, and the client must work without it.
+
+RemoteDriverRepository therefore accepts the code OR the legacy prose
+(_isNotRegistered), gated so the prose branch only runs when no code was sent.
+Remove that fallback once 017 is live in production — there is one server, so
+the trigger is simply "deployed".
 
 _translate now reads a string `detail` BEFORE falling back to the generic 422
 message. The blanket 422 was swallowing the deliberate ones — vehicle
 capacity, and this spec's "Upload a JPG, PNG or PDF." Only FastAPI's own
 validation list, which is a developer artefact and must never reach a driver,
 still gets the generic text.
+
+_ProfileGate's error branch offers Retry AND SIGN OUT. Retry alone is a dead
+end: it only helps a transient failure, and anything structural — a server
+older than the app, a token for an account state this build cannot read —
+leaves a driver tapping a button whose result never changes. Sign out is the
+one escape that works without knowing what went wrong. It deliberately does
+NOT route to registration on an unknown error: guessing "you must not be
+registered" would show the form to drivers who already have an account, and
+their registration would 409.
 
 The upload is `ref.read` in the button handler and has NO provider anywhere,
 which is the create-booking rule applied again: there is no idempotency key,
@@ -1026,6 +1057,22 @@ depends on. Its three consequences — a time-based fare component, waiting
 charges, and proximity matching — are future-plans §7, §8 and §9.
 
 Known gaps:
+- THE LOCAL SERVICE ACCOUNT KEY IS DEAD, and it fails in a way that looks
+  fine. volt-backend/secrets/firebase-service-account.json no longer signs:
+  an OAuth token exchange against Google returns
+  `invalid_grant: Invalid JWT Signature`, meaning the private key was rotated
+  or deleted in IAM. Found 8 Oct 2026 while trying to mint a test ID token.
+  WHY NOTHING APPEARED BROKEN: verify_id_token does NOT use the private key.
+  It validates against Google's published public certs plus the project id, so
+  phone auth, every protected endpoint and the whole test suite keep working
+  on a revoked key. What DOES need it is anything that signs or authenticates
+  outbound — Firebase Storage uploads and signed URLs, i.e. all of spec 017's
+  document handling. So local 017 work will fail at the Storage call and
+  nowhere earlier.
+  Production is unaffected if Render holds the regenerated key; that is worth
+  confirming rather than assuming, because the same symptom would be silent
+  there too. Fix: download a fresh key from the Firebase console into
+  volt-backend/secrets/ (gitignored, never commit).
 - SPEC 017 IS NOT VERIFIED ON DEVICE. Both halves are now built and the
   suite is green, but no document has been uploaded from a real phone — so
   the multipart path, the camera and gallery pickers, and the routing
