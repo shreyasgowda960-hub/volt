@@ -1,12 +1,21 @@
 import 'package:volt_core/volt_core.dart';
 
 import '../../jobs/domain/job.dart';
+import '../../verification/domain/driver_document.dart';
 import '../domain/driver_profile.dart';
 import '../domain/vehicle_type_option.dart';
+
+/// The server's machine-readable reason on a driver-auth 403. Branch on these,
+/// never on the message — the message is prose shown to a person and may be
+/// reworded at any time. See app/driver_auth.py.
+const _kDriverNotRegistered = 'driver_not_registered';
 
 /// Thrown by [DriverRepository.me] when the token is valid but there is no
 /// drivers row for this uid yet — a routing signal (show registration), not
 /// an error state.
+///
+/// Distinguished from "registered but unverified" by the server's error CODE.
+/// Both are 403s, and they route to completely different screens.
 class DriverNotRegistered implements Exception {
   const DriverNotRegistered();
 }
@@ -28,8 +37,24 @@ class JobExpired implements Exception {
 abstract interface class DriverRepository {
   Future<List<VehicleTypeOption>> vehicleTypes();
 
-  /// Throws [DriverNotRegistered] on 403 "Not registered as a driver".
+  /// Throws [DriverNotRegistered] on a 403 coded `driver_not_registered`.
   Future<DriverProfile> me();
+
+  /// The driver's own documents and verification status.
+  ///
+  /// No signed URLs come back — the backend does not issue them on this
+  /// endpoint. A driver took the photo; they do not need to re-read it.
+  Future<DriverVerification> myDocuments();
+
+  /// Upload one document. A MUTATION: call it from an event handler via
+  /// `ref.read`, never from a provider a widget watches, or a retry re-uploads
+  /// and the second call 409s against the one the first created.
+  Future<DriverDocument> uploadDocument({
+    required DocumentType type,
+    required List<int> bytes,
+    required String filename,
+    String? documentNumber,
+  });
 
   Future<DriverProfile> register({
     required String name,
@@ -68,7 +93,7 @@ class RemoteDriverRepository implements DriverRepository {
       final json = await _api.get('/api/v1/drivers/me');
       return DriverProfile.fromJson(json);
     } on ApiException catch (e) {
-      if (e.statusCode == 403 && e.message.contains('Not registered')) {
+      if (e.statusCode == 403 && e.code == _kDriverNotRegistered) {
         throw const DriverNotRegistered();
       }
       rethrow;
@@ -87,6 +112,33 @@ class RemoteDriverRepository implements DriverRepository {
       'vehicle_type_code': vehicleTypeCode,
     });
     return DriverProfile.fromJson(json);
+  }
+
+  @override
+  Future<DriverVerification> myDocuments() async {
+    final json = await _api.get('/api/v1/drivers/me/documents');
+    return DriverVerification.fromJson(json);
+  }
+
+  @override
+  Future<DriverDocument> uploadDocument({
+    required DocumentType type,
+    required List<int> bytes,
+    required String filename,
+    String? documentNumber,
+  }) async {
+    final json = await _api.postMultipart(
+      '/api/v1/drivers/me/documents',
+      fields: {
+        'document_type': type.wireValue,
+        if (documentNumber != null && documentNumber.isNotEmpty)
+          'document_number': documentNumber,
+      },
+      fileField: 'file',
+      bytes: bytes,
+      filename: filename,
+    );
+    return DriverDocument.fromJson(json);
   }
 
   @override

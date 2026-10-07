@@ -19,6 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 
 from app.database import SessionLocal
+from app.driver_auth import DRIVER_NOT_VERIFIED
 from app.main import app
 from app.models.booking import Booking
 from app.models.driver import Driver, VerificationStatus
@@ -147,7 +148,7 @@ async def test_unverified_driver_cannot_claim_a_job():
 
     assert jobs.status_code == 403
     assert accept.status_code == 403
-    assert "pending verification" in accept.json()["detail"]
+    assert accept.json()["detail"]["code"] == DRIVER_NOT_VERIFIED
 
     await _cleanup(driver_phone)
     await _cleanup(customer_phone)

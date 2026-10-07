@@ -6,7 +6,12 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import delete
 
 from app.database import SessionLocal
-from app.driver_auth import get_authenticated_driver, get_current_driver
+from app.driver_auth import (
+    DRIVER_NOT_REGISTERED,
+    DRIVER_NOT_VERIFIED,
+    get_authenticated_driver,
+    get_current_driver,
+)
 from app.models.driver import Driver, VerificationStatus
 from app.models.user import User
 
@@ -48,7 +53,8 @@ async def test_valid_token_with_no_driver_row_raises_403():
                 await _resolve_current_driver(db)
 
         assert exc_info.value.status_code == 403
-        assert "Not registered" in exc_info.value.detail
+        # Assert on the CODE, not the prose. The app routes on this.
+        assert exc_info.value.detail["code"] == DRIVER_NOT_REGISTERED
 
 
 @pytest.mark.asyncio
@@ -75,7 +81,7 @@ async def test_unverified_driver_raises_403():
                 await _resolve_current_driver(db)
 
         assert exc_info.value.status_code == 403
-        assert "pending verification" in exc_info.value.detail
+        assert exc_info.value.detail["code"] == DRIVER_NOT_VERIFIED
 
         await _cleanup(db, phone)
 

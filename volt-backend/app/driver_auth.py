@@ -7,6 +7,23 @@ from app.auth import _bearer, verify_token
 from app.database import get_db
 from app.models.driver import Driver
 
+# Machine-readable reasons for the two driver-auth 403s.
+#
+# These are the ONLY endpoints whose `detail` is an object rather than a
+# string. That is a deliberate exception, not a second error standard: the
+# driver app ROUTES on the difference between these two, and it previously did
+# so by substring-matching the prose below — so a copy-edit to a user-facing
+# sentence would have silently sent every registered driver back to the
+# registration form. Everywhere else `detail` stays a plain string, and the
+# client tolerates both shapes.
+DRIVER_NOT_REGISTERED = "driver_not_registered"
+DRIVER_NOT_VERIFIED = "driver_not_verified"
+
+
+def _coded(code: str, message: str) -> dict[str, str]:
+    """A 403 body the app can branch on without reading English."""
+    return {"code": code, "message": message}
+
 
 async def get_authenticated_driver(
     creds: HTTPAuthorizationCredentials = Depends(_bearer),
@@ -43,7 +60,7 @@ async def get_authenticated_driver(
     if driver is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not registered as a driver",
+            detail=_coded(DRIVER_NOT_REGISTERED, "Not registered as a driver"),
         )
 
     return driver
@@ -66,7 +83,9 @@ async def get_current_driver(
     if not driver.is_verified:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Driver account pending verification",
+            detail=_coded(
+                DRIVER_NOT_VERIFIED, "Driver account pending verification"
+            ),
         )
 
     return driver

@@ -802,8 +802,8 @@ removed by flood-filling inward from the border, NOT by luminance — the truck
 cab in the logo is genuinely white, and a luminance key punches a hole through
 it.
 
-Driver document verification (spec 017). Backend done; the driver app half is
-NOT built yet — see Known gaps.
+Driver document verification (spec 017). Backend and driver app both built.
+Not yet exercised on a phone — see Known gaps.
 
 is_verified IS NOW DERIVED, NOT SET AT REGISTRATION. Before 017,
 POST /drivers/register hardcoded is_verified=True, so any phone number could
@@ -894,6 +894,86 @@ upload: FastAPI's Form/File/UploadFile raise at import time without it. It
 replaces nothing. Firebase Storage needed no new dependency — firebase-admin
 already bundles google-cloud-storage.
 
+DRIVER APP ROUTING HAS FOUR STATES, and they are chosen by
+verification_status, NOT by is_verified. The bool cannot tell "upload
+something" from "wait for us", and those are different screens:
+
+  session == null             -> PhoneEntryScreen
+  profile == null             -> DriverRegistrationScreen
+  pending | rejected          -> DocumentUploadScreen
+  submitted                   -> PendingReviewScreen
+  approved                    -> DriverHomeScreen
+
+rejected shares a screen with pending on purpose: the remedy is identical,
+and the upload screen already shows the reason against the slot that failed.
+An UNRECOGNISED status falls back to pending rather than throwing — a server
+ahead of the app should route a driver somewhere recoverable, and `approved`
+would be worse than wrong, dropping an unverified driver onto a job board
+where every call 403s.
+
+THE TWO DRIVER-AUTH 403s CARRY A MACHINE-READABLE CODE, and they are the only
+endpoints in VOLT whose `detail` is an object rather than a string:
+`{"code": ..., "message": ...}`, with codes driver_not_registered and
+driver_not_verified. This is a TOLERATED SHAPE, not a second error standard —
+everywhere else `detail` stays a plain string and ApiClient._translate reads
+both. It exists because the app ROUTES on the difference between those two
+403s and previously did so by substring-matching the prose, so rewording a
+user-facing sentence could have sent every registered driver back to the
+registration form. Branch on ApiException.code; never on its message.
+
+_translate now reads a string `detail` BEFORE falling back to the generic 422
+message. The blanket 422 was swallowing the deliberate ones — vehicle
+capacity, and this spec's "Upload a JPG, PNG or PDF." Only FastAPI's own
+validation list, which is a developer artefact and must never reach a driver,
+still gets the generic text.
+
+The upload is `ref.read` in the button handler and has NO provider anywhere,
+which is the create-booking rule applied again: there is no idempotency key,
+so a watched provider's auto-retry would post the image a second time and the
+second would 409 against the row the first just made. The documents LIST is a
+read, so it is a provider — autoDispose, because FutureProvider is keep-alive
+by default in Riverpod 3 and a kept one hands a later visit an
+already-reviewed answer.
+
+After a resubmission there are TWO rows of the same document type, and the
+app must show the live one. DriverVerification.forType prefers non-rejected
+and breaks ties on the highest id, deliberately NOT on the order the server
+sent: list_documents happens to return newest-first today, and depending on
+that silently would make a reordering upstream look like an app bug. Without
+this a driver who had already re-uploaded would keep seeing the old rejection
+and a button to fix what they had fixed.
+
+The upload screen's heading keys off whether any SLOT is rejected, not off
+the driver-level status. Reject both documents, re-upload one, and the driver
+is back to `pending` while a rejection is still on screen against the other.
+
+PendingReviewScreen does NOT poll and has NO spinner, both deliberate. A
+spinner implies something is happening; what is happening is that a person
+will open a queue later. A review takes hours, so a 5s poll would be
+thousands of requests to watch a field that changes once — the booking poller
+exists because a job board changes by the minute, which this does not. Pull
+to refresh is the whole interaction.
+
+image_picker is a new dependency in driver_app only, and replaces nothing —
+there was no way to choose a file before. NO MANIFEST PERMISSION WAS ADDED,
+on purpose: the camera is reached through an intent and the gallery through
+the system photo picker, so declaring CAMERA would only make a runtime
+request mandatory where none is needed today. Picking is wrapped in
+DocumentPicker (features/verification/data/) so no widget talks to a platform
+plugin directly.
+
+IMAGES ONLY FROM THE APP, though the backend also accepts PDF. A driver
+photographs a licence; they do not have one as a file, and supporting PDF
+would mean a second dependency for a path nobody on a phone takes. The
+downscale (maxWidth 2000, quality 85) is mild on purpose — a reviewer has to
+read a licence number off the image, and the constraint being solved is
+upload time on mobile data, not the 10MiB cap, which a raw phone JPEG clears
+untouched.
+
+ApiClient.sendTimeout is 120s and deliberately NOT tied to AppConfig.isRemote
+like the other two. It bounds how long we spend PUSHING bytes, and what makes
+that slow is the driver's uplink, not where the server is.
+
 Tests never touch Storage. conftest's autouse _block_outbound_storage patches
 app.services.storage.default_storage_service — through the MODULE, for the
 same reason as the routing guard. Tests that need a verified driver approve
@@ -912,18 +992,21 @@ depends on. Its three consequences — a time-based fare component, waiting
 charges, and proximity matching — are future-plans §7, §8 and §9.
 
 Known gaps:
-- SPEC 017'S DRIVER APP HALF IS NOT BUILT. The backend is complete and
-  tested, but the driver app still has three-state routing (signed out /
-  no profile / registered) and no way to upload a document. A driver who
-  registers now lands on the error screen, because driverProfileProvider gets
-  a profile it has no screen for. So verification is enforced on the server
-  and unreachable from the app: nobody who is not already grandfathered can
-  become a driver. Needs spec 017 step 5 — DocumentUploadScreen,
-  PendingReviewScreen, the fourth routing state, image_picker, and a
-  multipart method on ApiClient (there is none today).
-  Also unapplied: volt-backend/storage.rules exists in the repo but has not
-  been pushed to the Firebase console, so the bucket is still on whatever
-  production-mode default it was created with.
+- SPEC 017 IS NOT VERIFIED ON DEVICE. Both halves are now built and the
+  suite is green, but no document has been uploaded from a real phone — so
+  the multipart path, the camera and gallery pickers, and the routing
+  transitions have only been proven by analysis and a build. Until that run
+  happens, "a driver can get verified" is a claim, not a fact.
+  Also unapplied until confirmed: volt-backend/storage.rules exists in the
+  repo but has to be pushed to the Firebase console, or the bucket stays on
+  whatever production-mode default it was created with and the
+  "client access is denied" claim is true only in the repo.
+- NOBODY CAN BE APPROVED WITHOUT A CURL. The review endpoints are real and
+  the app routes to PendingReviewScreen correctly, but approval is a manual
+  POST with X-Admin-Token — there is no UI, by guardrail. A driver who
+  uploads will sit on that screen until the owner runs the request by hand.
+  That is the intended phase-5 gap, not a defect, but it means onboarding a
+  driver is a two-person operation today.
 - THE APP CANNOT FUNCTION WITHOUT GOOGLE. Found on device 5 Sep 2026 by
   blanking GOOGLE_MAPS_API_KEY: autocomplete 502s, and dropping a pin fails
   too because reverse geocoding is also a Google call. No address-entry path degrades, so

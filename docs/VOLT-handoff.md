@@ -15,17 +15,22 @@ because it is fine at this size, it goes there in the same session.
 
 ---
 
-## Repo state — 2026-09-05
+## Repo state — 2026-10-07
 
 | | |
 |---|---|
-| Branch | `main` |
-| `origin/main` | `dbe8cc6` Merge branch 'feat/road-distance' — **pushed, so deployed** |
-| Unpushed | docs commits only |
-| Working tree | clean |
-| Backend tests | 194 passing |
+| Branch | `feat/driver-verification` — **unmerged, so NOT deployed** |
+| Branched from | `feat/theme-and-branding` (spec 016), itself unmerged |
+| `origin/main` | `dbe8cc6` Merge branch 'feat/road-distance' — pushed, so deployed |
+| Unpushed | specs 016 and 017 in full |
+| Backend tests | 215 passing |
 | Flutter | `volt_core` 8 tests; all three packages analyze clean |
-| Migration head | `afbcf9152650` (`bookings.distance_source`) — **now in production** |
+| Migration head | `f6afa0f7088f` (`driver_document_verification`) — **local only** |
+
+**NOTHING SINCE 014 IS IN PRODUCTION.** Two specs are stacked on this branch —
+016 (theme, logo, splash) and 017 (driver verification) — and the 017 migration
+has never run against the Render database. Merging this to `main` auto-deploys
+both and runs that migration, so it wants the on-device walk first.
 
 **SPEC 014 IS LIVE.** `feat/road-distance` was merged into `main` and pushed on
 5 Sep 2026, and pushing `main` auto-deploys, so all of it is in production:
@@ -41,15 +46,6 @@ watching in the logs rather than assuming:
   three-hop shape came from production, but a WARNING or ERROR from
   `app.services.rate_limit` means the topology moved and the limiter is no
   longer per-IP. Grep for it.
-
-**THIS FILE IS UNTRACKED.** `git status` shows `?? docs/specs/VOLT-handoff.md`.
-It is the one artifact of the last two sessions that is not in version
-control, so it is also the one that vanishes with a bad `git clean`. Commit it.
-
-Note the path: the file lives at `docs/specs/VOLT-handoff.md`, not
-`docs/handoff.md`.
-
----
 
 ## Built and deployed
 
@@ -91,13 +87,25 @@ error translation, auth repositories and providers, theme, `AppConfig`,
 | POST | `/api/v1/bookings/{code}/pickup` | driver |
 | POST | `/api/v1/bookings/{code}/deliver` | driver |
 | POST | `/api/v1/drivers/register` | token, no driver row yet |
-| GET | `/api/v1/drivers/me` | driver |
+| GET | `/api/v1/drivers/me` | driver, verified OR NOT |
+| POST | `/api/v1/drivers/me/documents` | driver, verified OR NOT — multipart |
+| GET | `/api/v1/drivers/me/documents` | driver, verified OR NOT |
 | PATCH | `/api/v1/drivers/me/availability` | driver |
 | GET | `/api/v1/drivers/jobs` | driver, online only |
 | GET | `/api/v1/drivers/bookings` | driver |
 | POST | `/api/v1/places/autocomplete` | authenticated |
 | POST | `/api/v1/places/details` | authenticated |
 | POST | `/api/v1/geocode/reverse` | authenticated |
+| GET | `/api/v1/admin/drivers/pending` | `X-Admin-Token` |
+| POST | `/api/v1/admin/drivers/{id}/approve` | `X-Admin-Token` |
+| POST | `/api/v1/admin/drivers/{id}/reject` | `X-Admin-Token` |
+| DELETE | `/api/v1/admin/drivers/{id}/documents` | `X-Admin-Token` |
+
+The three `verified OR NOT` rows are the auth split spec 017 forced. They use
+`get_authenticated_driver` (identity only); everything else uses
+`get_current_driver`, which adds the `is_verified` gate. Without the split the
+spec was circular — a pending driver could not read their own status, so the
+app could never route them to the screen that would fix it.
 
 ---
 
@@ -291,14 +299,34 @@ would create duplicate bookings and claim jobs the driver did not choose.
 
 ## Known gaps
 
-**No rate limiting anywhere.** Including `/estimate`, which is public and
-unauthenticated and therefore the most attractive target. The only spend bound
-is Google-side quota alerts. Deferred as needing its own spec — the design
-decisions are cross-cutting (per-user vs per-IP, what a 429 does to a client
-polling every 5s, different limits for customers and drivers), and a good
-implementation wants Redis, which arrives in phase 3. A Postgres counter would
-mean a write per request, which is the amplification pattern already removed
-from the expiry sweep.
+**Rate limiting covers one endpoint.** `POST /bookings/estimate` is capped at
+20/min per IP (`app/services/rate_limit.py`), added with spec 014 because that
+endpoint is public, unauthenticated, and now spends a live Pro-tier Routes
+request per call with no cache behind it. That is the minimum that had to exist
+before 014 merged, not the rate-limiting spec.
+
+Everything else is still uncapped: the Places proxy endpoints, every driver and
+booking endpoint, spec 017's document upload, and per-user limits generally.
+The Google-side per-API quota cap remains the only thing that actually bounds
+spend — 20/min per IP is still 1,200 requests an hour from one address.
+
+**The counter is per process, and that failure is silent.** Render's free plan
+runs one instance, so today the limit means what it says. Add a second — or a
+paid plan with autoscaling — and each keeps its own dict, so the effective
+limit becomes 20 x N. Nothing errors and nothing logs; the only symptom is a
+Google bill. Whoever adds instance number two moves this to Redis in the same
+change.
+
+It keys on the **third X-Forwarded-For entry from the right**, measured against
+production rather than assumed. Re-measure after any infrastructure change —
+drop Cloudflare, add a WAF, move hosting, and `-3` names the wrong thing. The
+full reasoning, including which two simpler choices are wrong and the one added
+hop that cannot be detected, is in `CLAUDE.md`.
+
+The real spec is still owed, and still wants Redis (phase 3): per-user vs
+per-IP, what a 429 does to a client polling every 5s, different limits for
+customers and drivers. A Postgres counter would mean a write per request, which
+is the amplification pattern already removed from the expiry sweep.
 
 **Lazy expiry has no scheduler.** `expire_stale_bookings` runs on API requests,
 throttled to once per 60s per process. If nobody calls the API, a booking sits
@@ -308,23 +336,41 @@ traffic, not better.
 
 **Release APKs are debug-signed.** Cannot go to Play Store. See spec 013 Part B.
 
-**Zero Flutter tests.** 154 backend tests, none in either app. Every screen
-change is verified by tapping through it manually.
+**Zero Flutter tests.** 215 backend tests, none in either app beyond
+`volt_core`'s poller tests. Every screen change is verified by tapping through
+it manually — which is exactly why spec 017's app half counts as unverified.
 
-**Driver verification is a stub.** `is_verified` is set true on registration.
-No licence, RC, insurance or photo check. This is a hard blocker before any
-driver who is not the owner does a delivery.
+**Driver verification is built but never run on a phone (spec 017).**
+`is_verified` is now derived from `verification_status` and set only by the
+admin approve endpoint — registration no longer auto-verifies. Backend and
+driver app are both complete and the suite is green, but no document has been
+uploaded from a real device, so the multipart path, the camera and gallery
+pickers and the four-state routing are proven by analysis and a build, not by
+use. Two things still gate a real driver:
+- `volt-backend/storage.rules` has to be applied in the Firebase console. Until
+  then the bucket keeps its creation-time default and "client access is denied"
+  is true only in the repo.
+- Approval is a manual `POST` with `X-Admin-Token`. There is no admin UI by
+  guardrail, so onboarding a driver is a two-person operation today.
 
-**Real SMS is off.** Only Firebase test numbers can sign in. Turning it on
-needs a daily SMS quota cap and abuse protection (App Check, SMS region policy
-restricted to India) — SMS pumping is a real attack. Console work, not code.
+**Real SMS is ON, and reCAPTCHA is not.** Phone sign-in is enabled for real
+numbers as of 5 Sep 2026, so every OTP is a billed message at $0.07 (India,
+Google Identity Platform) against a default 1000/day quota — roughly $70/day of
+exposure. The SMS region policy is ALLOWLIST, India only, and that is the whole
+of the abuse protection: it stops foreign-number SMS pumping, and nothing stops
+a bot hammering Indian numbers, because the reCAPTCHA site keys do not exist.
+Acceptable while distribution is sideloaded APKs to known people. Must be fixed
+before any public release — `docs/future-plans.md` §5.
 
 **No driver→customer contact.** Customers can call drivers; not the reverse. A
 driver at a locked gate cannot call. Masked two-way calling is the proper fix,
 phase 4.
 
-**Render free Postgres expires.** Created 8 Aug 2026, ~30-day free window.
-Schema and seed data rebuild from migrations; bookings and users would be lost.
+**Render free Postgres has probably already expired.** Created 8 Aug 2026 on a
+~30-day free window, which puts the date in early September — two months back
+from today. Check the Render dashboard before assuming any production data is
+still there. Schema and seed data rebuild from migrations; bookings and users
+do not.
 
 **Free trial ends 3 Dec 2026.** Maps APIs stop working unless the Cloud billing
 account is activated. Activating also removes the hard spending ceiling the
@@ -500,19 +546,30 @@ Secrets: `volt-backend/.env` (gitignored) and Render's Environment tab.
 
 ## Next task
 
-**Finish and merge spec 014.** Owner verifies the caching clause, completes the
-on-device fare comparison, merges to `main`.
+**Walk spec 017 on a device, then merge 016 and 017 to `main`.** Both are
+stacked unmerged on `feat/driver-verification`, so one merge deploys the theme,
+the driver verification backend and the 017 migration together. Before that:
+
+1. Apply `volt-backend/storage.rules` in the Firebase console. Until it is
+   applied the bucket keeps its creation-time default.
+2. Register a fresh number in the driver app, upload both documents, approve
+   with a `POST /api/v1/admin/drivers/{id}/approve` carrying `X-Admin-Token`,
+   and confirm the app lands on the job board. Reject one first, to see the
+   reason land against the right slot.
+3. Set `ADMIN_REVIEW_TOKEN` in Render's environment before the merge, or every
+   review endpoint 503s in production. Unset means refuse-everyone by design,
+   not an open endpoint.
+
+Also still outstanding from 014, and cheap: pull one fare estimate from the
+production app and confirm the booking comes back `distance_source=google`. A
+silently degraded production returns a plausible fare, which is the whole
+reason that column exists.
 
 Then, in order of value:
 
-1. **Real SMS enablement** — App Check, SMS region policy limited to India,
-   daily quota cap. Blocks anyone outside the test-number list from signing in.
-2. **Driver document verification** — the hard blocker before a real driver.
-   Good candidate to hand to a collaborator: cleanly separated, own schema,
-   own screens.
-3. **Time-based fare component** — see Planned above.
-4. **Flutter tests** — the largest untested surface in the project.
-5. **Live location tracking (phase 3)** — Redis, foreground service, proximity
+1. **Time-based fare component** — see Planned above.
+2. **Flutter tests** — the largest untested surface in the project.
+3. **Live location tracking (phase 3)** — Redis, foreground service, proximity
    matching. Hardest remaining work; ColorOS background-kill behaviour on the
    test device is a known obstacle.
 

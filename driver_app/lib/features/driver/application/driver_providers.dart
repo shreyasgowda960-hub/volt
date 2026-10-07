@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:volt_core/volt_core.dart';
 
+import '../../verification/domain/driver_document.dart';
 import '../data/driver_repository.dart';
 import '../domain/driver_profile.dart';
 import '../domain/vehicle_type_option.dart';
@@ -28,6 +29,20 @@ final driverProfileProvider = FutureProvider<DriverProfile?>((ref) async {
   } on DriverNotRegistered {
     return null;
   }
+});
+
+/// The driver's own documents and verification status (spec 017).
+///
+/// autoDispose because AsyncNotifier/FutureProvider are keep-alive by DEFAULT
+/// in Riverpod 3: without it this survives the upload screen being popped and
+/// hands a later visit a stale, already-reviewed answer.
+///
+/// A READ, so a provider is the right home and Riverpod's retry is safe. The
+/// UPLOAD is a mutation and deliberately has no provider at all — see
+/// DriverRepository.uploadDocument.
+final driverDocumentsProvider =
+    FutureProvider.autoDispose<DriverVerification>((ref) async {
+  return ref.watch(driverRepositoryProvider).myDocuments();
 });
 
 // availableJobsProvider and activeJobProvider lived here until spec 011.
