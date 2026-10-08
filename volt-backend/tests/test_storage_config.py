@@ -179,3 +179,105 @@ class TestTheBucketNameReachesFirebase:
 
         _, options = fb.initialize_app.call_args[0]
         assert "storageBucket" not in options
+
+
+class TestSignedUrlExpiry:
+    """What expiry the URLs we hand a reviewer actually carry.
+
+    Exercises the REAL FirebaseStorageService.signed_url against a real
+    google-cloud-storage Bucket. Only the credentials are throwaway: V4 signing
+    is a purely local operation, so a locally generated RSA key produces a
+    structurally genuine URL without a network call, a real service account, or
+    any risk of touching production storage.
+
+    cryptography is not a new dependency — google-cloud-storage already
+    requires it for exactly this signing path, so our signed_url cannot work
+    without it in the first place.
+
+    WHAT THIS CANNOT PROVE: that Google honours the expiry. That needs a valid
+    service account key and a real object, and is a manual check. What it does
+    prove is the claim we control — that the URL says 15 minutes, and that the
+    expiry is inside the signed material rather than an editable query param.
+    """
+
+    @staticmethod
+    def _throwaway_bucket():
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from google.cloud import storage as gcs
+        from google.oauth2 import service_account
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode()
+        creds = service_account.Credentials.from_service_account_info(
+            {
+                "type": "service_account",
+                "project_id": "volt-test",
+                "private_key_id": "throwaway",
+                "private_key": pem,
+                "client_email": "throwaway@volt-test.iam.gserviceaccount.com",
+                "client_id": "0",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        )
+        client = gcs.Client(project="volt-test", credentials=creds)
+        return client.bucket("volt-test.firebasestorage.app")
+
+    def _sign(self, path: str) -> str:
+        import asyncio
+
+        from app.services.storage import FirebaseStorageService
+
+        with patch(
+            "firebase_admin.storage.bucket", return_value=self._throwaway_bucket()
+        ):
+            return asyncio.run(FirebaseStorageService().signed_url(path))
+
+    def test_the_url_expires_in_fifteen_minutes(self):
+        import urllib.parse
+
+        from app.services.storage import SIGNED_URL_TTL
+
+        url = self._sign("driver-documents/42/driving_licence/abc")
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+
+        assert int(query["X-Goog-Expires"]) == 900
+        # And that the constant is what produced it, so changing SIGNED_URL_TTL
+        # without meaning to cannot leave this test passing on a stale number.
+        assert int(query["X-Goog-Expires"]) == int(SIGNED_URL_TTL.total_seconds())
+
+    def test_the_expiry_is_signed_not_merely_attached(self):
+        """A reviewer could otherwise extend their own link by editing it.
+
+        V4 puts the query string into the string-to-sign, so X-Goog-Expires is
+        covered by X-Goog-Signature. Asserting the algorithm is V4 is what
+        makes the 15 minutes above mean anything — a scheme that left the
+        expiry outside the signature would read identically.
+        """
+        import urllib.parse
+
+        url = self._sign("driver-documents/42/vehicle_rc/def")
+        query = dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query))
+
+        assert query["X-Goog-Algorithm"] == "GOOG4-RSA-SHA256"
+        assert query["X-Goog-Signature"]
+        assert "X-Goog-Expires" in query
+
+    def test_signed_urls_bypass_storage_rules_by_design(self):
+        """The reason `allow read: if false` does not break the reviewer.
+
+        A signed URL is served by storage.googleapis.com and authorised by the
+        signature under IAM — Firebase Security Rules are not consulted at all.
+        That is what lets the rules deny every client while the admin endpoint
+        still shows images. If this ever starts pointing at
+        firebasestorage.googleapis.com, the rules WOULD apply and every signed
+        URL would 403.
+        """
+        import urllib.parse
+
+        url = self._sign("driver-documents/42/driving_licence/ghi")
+        assert urllib.parse.urlparse(url).netloc == "storage.googleapis.com"

@@ -697,6 +697,47 @@ Verified on device (step D). Recorded because "it is merged, so it probably
 works" is not evidence, and a year from now nobody will remember which parts
 were actually exercised on a phone as opposed to only under test.
 
+Spec 017 — Storage access, verified live against production 8 Oct 2026
+(bucket volt-2b36f.firebasestorage.app):
+- NO ANONYMOUS READ. All four unauthenticated routes to an object return 403:
+  the Firebase download API (?alt=media), its metadata endpoint, a bucket
+  listing, and the GCS XML API. The last one matters separately because
+  storage.googleapis.com is governed by IAM, NOT by storage.rules — denying one
+  says nothing about the other, so both were checked.
+- A 403 FOR A NON-EXISTENT PATH IS THE CORRECT ANSWER, not a weaker one. Rules
+  are evaluated before existence, so denial does not leak whether an object is
+  there. It also means this check needs no real document to be meaningful.
+- WHAT THIS DOES NOT PROVE, and the distinction is the whole point of
+  storage.rules: Firebase's DEFAULT production-mode rules are
+  `allow read, write: if request.auth != null`, which denies anonymous callers
+  exactly as ours do. An unauthenticated 403 is therefore consistent with both
+  our rules and the default we meant to replace. The case that separates them
+  is an AUTHENTICATED read — any signed-in driver can read any other driver's
+  licence under the default, and nobody can under ours. THAT IS STILL
+  UNVERIFIED. It needs a Firebase ID token, and all three routes to one are
+  shut: custom-token minting fails on the revoked local service account key,
+  anonymous sign-in returns ADMIN_ONLY_OPERATION (disabled in the project), and
+  real-number phone sign-in is blocked by Play Integrity. Verify it from the
+  driver app with a real token once the key is replaced.
+
+Signed URLs (same session, verified through the real
+FirebaseStorageService.signed_url with a throwaway local signing key):
+- 900 seconds, 15 minutes, matching SIGNED_URL_TTL. V4, GOOG4-RSA-SHA256.
+- THE EXPIRY IS INSIDE THE SIGNED MATERIAL, not merely attached to the URL.
+  Google echoes the canonical request on a signature mismatch and
+  X-Goog-Expires=900 is in it, so a reviewer cannot extend their own link by
+  editing the query string — any edit invalidates X-Goog-Signature.
+- SIGNED URLS ARE SERVED BY storage.googleapis.com AND BYPASS storage.rules
+  ENTIRELY, authorised by the signature under IAM. That is precisely why
+  `allow read: if false` can deny every client without breaking the reviewer.
+  If this ever starts pointing at firebasestorage.googleapis.com the rules WOULD
+  apply and every signed URL would 403. There is a test asserting the host.
+- Fetching a URL signed by a key Google does not know returns 403
+  SignatureDoesNotMatch, which also confirms the object is not world-readable.
+- NOT VERIFIED: that Google rejects a validly-signed but EXPIRED url, and that
+  a real URL from /admin/drivers/pending serves an actual image. Both need a
+  working service account key and an uploaded document.
+
 Spec 011 — polling + driver details:
 - Customer screen advances within ~5s of a status change, with no manual
   refresh.

@@ -350,6 +350,22 @@ throttled to once per 60s per process. If nobody calls the API, a booking sits
 bookings created minutes apart all received the same `expired_at`. Worse at low
 traffic, not better.
 
+**Storage rules: anonymous access is confirmed denied, authenticated access is
+not.** Checked live 8 Oct 2026 — four unauthenticated routes to an object all
+return 403, including the GCS XML API, which is governed by IAM rather than by
+`storage.rules` and so had to be checked separately.
+
+That is not the whole claim, though. Firebase's *default* production-mode rules
+(`allow read, write: if request.auth != null`) deny anonymous callers too, so
+an unauthenticated 403 cannot tell our rules apart from the default we meant to
+replace. The difference only shows up for a **signed-in** caller: under the
+default any driver can read any other driver's licence; under ours nobody can.
+Verifying that needs a Firebase ID token and all three routes to one are
+currently shut — revoked service account key, anonymous sign-in disabled, phone
+sign-in blocked by Play Integrity. **Do this from the driver app once the key
+is replaced.** Until then, "client access is denied" is proven for strangers
+and assumed for users.
+
 **`FIREBASE_STORAGE_BUCKET` must be set in Render and in local `.env`.** New
 required setting as of 8 Oct 2026 — the backend now refuses to start without
 it, deliberately. Value: `volt-2b36f.firebasestorage.app`. It is in
