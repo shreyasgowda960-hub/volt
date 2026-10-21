@@ -42,26 +42,6 @@ SIGNED_URL_TTL = timedelta(minutes=15)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
-class StorageNotConfigured(Exception):
-    """Raised at STARTUP, not at upload time, and deliberately fatal.
-
-    Distinct from StorageError: that one means a request failed and the caller
-    gets a 503. This one means the process should not come up at all.
-
-    It exists because of a real incident. The bucket name was never configured,
-    firebase_admin was initialised without it, and nothing noticed until a
-    driver pressed Upload in production — registration, /drivers/me and the
-    documents list all worked, so the deploy looked healthy. Half-working is
-    the worst outcome here: a driver gets through registration, is routed to
-    the upload screen, and cannot finish, leaving a driver row with no
-    documents and no way to make progress.
-
-    On Render a startup failure keeps the PREVIOUS deploy serving, so failing
-    here costs nothing and blocks the bad deploy — strictly better than
-    shipping a backend that accepts drivers it cannot onboard.
-    """
-
-
 class StorageError(Exception):
     """Storage was reachable but refused, or is not configured.
 
@@ -143,32 +123,23 @@ class FirebaseStorageService:
 
 
 def verify_storage_configured() -> None:
-    """Startup check. Fails the process when the bucket name is missing.
+    """Startup REACHABILITY probe. Never raises.
 
-    TWO CHECKS WITH DELIBERATELY DIFFERENT SEVERITY:
+    The fatal half of this moved into the type. Settings.firebase_storage_bucket
+    is a required `str` with min_length=1, so a missing or empty bucket name
+    fails when configuration is first loaded — earlier than this function can
+    run, and earlier than the app finishes importing. This used to raise for
+    that case too, which meant the comment, the type and the startup check were
+    three places that could disagree about whether the value was optional.
 
-    1. A MISSING BUCKET NAME IS FATAL. It is pure configuration — no network,
-       no credentials, the same answer every time — so there is no reading of
-       it other than "this deploy is misconfigured". This alone would have
-       caught the incident this function exists for.
-
-    2. AN UNREACHABLE BUCKET ONLY LOGS. Tempting to make fatal, and wrong on
-       this host: Render's free plan spins the service down when idle and runs
-       lifespan again on every cold start. A fatal network probe would turn a
-       momentary Google blip into an outage of the whole API — bookings and
-       fares included — rather than a failed deploy. A name that is set but
-       wrong is a smaller, rarer problem than that, and it still gets an ERROR
-       in the logs to find it by.
+    WHAT IS LEFT ONLY LOGS, deliberately. Render's free plan spins the service
+    down when idle and runs lifespan again on EVERY COLD START, so a fatal
+    network probe would turn a momentary Google blip into an outage of the
+    whole API — bookings and fares included — rather than a failed deploy. A
+    bucket name that is set but wrong is a smaller and rarer problem than that,
+    and it still gets an ERROR in the logs to find it by.
     """
     settings = get_settings()
-
-    if not settings.firebase_storage_bucket:
-        raise StorageNotConfigured(
-            "FIREBASE_STORAGE_BUCKET is not set. Driver document upload "
-            "(spec 017) cannot work without it, and the failure would not "
-            "appear until a driver pressed Upload. Set it to the bucket from "
-            "the Firebase console, e.g. volt-2b36f.firebasestorage.app."
-        )
 
     try:
         from firebase_admin import storage as fb_storage

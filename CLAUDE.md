@@ -73,9 +73,11 @@ happens to read is then the wrong one.
   customer app, driver app, `packages/volt_core/`. Per spec, not forever. A
   spec that needs both backend and app is taken whole by one person rather
   than split down an API contract that is still being designed.
-- **Claim a spec number before writing the spec**, by landing a title-only
-  file. Two people both writing `018-` is not just a conflict, it is two
-  different specs with the same number in two histories.
+- **Claim a spec number before writing the spec**, in a PR title or a GitHub
+  issue — never as a stub file. Two people both writing `018-` is not just a
+  conflict, it is two different specs with the same number in two histories.
+  A stub would also have to bypass the PR rule to land, and `docs/specs/`
+  means implemented decisions, not placeholders.
 - **Each person generates their own Firebase service account key and their
   own test phone number.** Never share either. Secrets still never leave the
   machine they are used on — not chat, not screenshots, not an AI
@@ -950,10 +952,19 @@ JPEG, PNG and PDF only. Size cap 10MiB: phone cameras produce 2-8MB JPEGs and
 a cap that rejects a real photo is worse than none, because the driver cannot
 proceed and has no idea why.
 
-THE BUCKET NAME IS CONFIGURATION AND IT IS CHECKED AT STARTUP.
-FIREBASE_STORAGE_BUCKET (e.g. volt-2b36f.firebasestorage.app) is passed to
-firebase_admin.initialize_app as storageBucket; without it
+THE BUCKET NAME IS REQUIRED BY THE TYPE, AND ONLY BY THE TYPE.
+Settings.firebase_storage_bucket is `str = Field(min_length=1)` — required and
+non-empty — so a missing or blank FIREBASE_STORAGE_BUCKET fails when
+configuration is first loaded, before the app finishes importing. It is passed
+to firebase_admin.initialize_app as storageBucket; without it
 firebase_admin.storage.bucket() raises "Storage bucket name not specified".
+
+It briefly lived in three places — a comment saying REQUIRED, a type saying
+`str | None = None`, and a fatal startup check — which is three things free to
+disagree and exactly how the next reader gets it wrong. One source of truth
+now: the type. get_settings turns pydantic's traceback into a sentence naming
+the variables and pointing at .env.example, because whoever hits it has
+usually just cloned the repo.
 
 That shipped to production once, 8 Oct 2026. The setting did not exist in
 config.py at all and initialize_app was called with no options, so uploads
@@ -962,15 +973,16 @@ all worked — a deploy that looked completely healthy and was discovered by a
 driver pressing Upload. Half-working is the worst shape here: the driver gets
 through registration, is routed to the upload screen, and cannot finish.
 
-verify_storage_configured() now runs in the lifespan handler, same as the
-Firebase credentials check, with a DELIBERATE ASYMMETRY between its two halves:
-- A MISSING BUCKET NAME IS FATAL. Pure configuration, no network, same answer
-  every time. On Render a startup failure keeps the PREVIOUS deploy serving, so
-  this blocks the bad deploy rather than half-shipping it.
-- AN UNREACHABLE OR NON-EXISTENT BUCKET ONLY LOGS AT ERROR. Render's free plan
-  spins down when idle and runs lifespan again on EVERY COLD START, so a fatal
-  network probe would turn a momentary Google blip into an outage of the whole
-  API — bookings and fares included — rather than a failed deploy.
+verify_storage_configured() still runs in the lifespan handler but is now a
+REACHABILITY PROBE ONLY, and never raises. Render's free plan spins down when
+idle and runs lifespan again on EVERY COLD START, so a fatal network probe
+would turn a momentary Google blip into an outage of the whole API — bookings
+and fares included — rather than a failed deploy. A bucket that is set but
+wrong gets an ERROR in the logs instead.
+
+The fatal half moved into the type, which is strictly earlier and needs no
+network. On Render a configuration failure keeps the PREVIOUS deploy serving,
+so a missing bucket blocks the bad deploy rather than half-shipping it.
 
 The name is NOT derived from the credentials' project_id even though the
 convention is {project_id}.firebasestorage.app. A derived name is a guess, and

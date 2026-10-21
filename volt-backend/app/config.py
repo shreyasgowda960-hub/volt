@@ -1,7 +1,7 @@
 from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
-from pydantic import field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -64,17 +64,28 @@ class Settings(BaseSettings):
     # --- Firebase Storage (spec 017) -------------------------------------
     # The bucket driver documents live in, e.g. volt-2b36f.firebasestorage.app.
     #
-    # REQUIRED, and checked at startup rather than at first upload. It was
-    # neither until 8 Oct 2026: firebase_admin.initialize_app() was called
-    # with no options, so firebase_admin.storage.bucket() raised "Storage
-    # bucket name not specified" — but only when a driver actually uploaded,
-    # in production, after a deploy that looked completely healthy.
+    # REQUIRED, AND REQUIRED HERE — this type is the single source of truth.
+    # It was `str | None = None` with the requirement living only in a comment
+    # and a startup check, which is three places to disagree and exactly how
+    # the next person misreads it. min_length=1 because an env var set to ""
+    # is what a half-filled dashboard produces and must not read as configured.
+    #
+    # It was neither required nor read until 8 Oct 2026:
+    # firebase_admin.initialize_app() was called with no options, so
+    # firebase_admin.storage.bucket() raised "Storage bucket name not
+    # specified" — but only when a driver actually uploaded, in production,
+    # after a deploy that looked completely healthy.
+    #
+    # Being required HERE means configuration fails when it is first loaded,
+    # which is earlier than any startup check can run and earlier than the app
+    # finishes importing. app/services/storage.py keeps only the reachability
+    # probe, which deliberately never raises.
     #
     # NOT derived from the credentials' project_id even though the
     # conventional name is {project_id}.firebasestorage.app. A derived bucket
     # name is a guess, and a guess that is wrong points the one piece of
     # genuinely sensitive data VOLT holds at a bucket nobody is watching.
-    firebase_storage_bucket: str | None = None
+    firebase_storage_bucket: str = Field(min_length=1)
 
     # Deployment: full service account JSON as a string. Takes precedence over
     # the file path when set, because there is no file system to write to.
@@ -106,7 +117,34 @@ class Settings(BaseSettings):
         return v
 
 
+class MissingConfiguration(RuntimeError):
+    """.env is incomplete or invalid.
+
+    Exists so an incomplete .env produces a sentence naming the variables
+    rather than a pydantic traceback. The person who hits this is usually
+    someone who has just cloned the repo, and the fix is always the same
+    file — so the error says which one.
+    """
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Cached so the .env file is parsed once per process, not per request."""
-    return Settings()  # type: ignore[call-arg]
+    try:
+        return Settings()  # type: ignore[call-arg]
+    except ValidationError as e:
+        names = sorted(
+            {
+                str(err["loc"][0]).upper()
+                for err in e.errors()
+                if err.get("loc")
+            }
+        )
+        raise MissingConfiguration(
+            "Configuration is incomplete or invalid: "
+            + ", ".join(names)
+            # ASCII only: this is read in a Render log or a Windows console,
+            # and a non-ASCII dash renders there as mojibake.
+            + ". Copy volt-backend/.env.example to .env and fill these in. "
+            "docs/collaboration.md has the onboarding checklist."
+        ) from e

@@ -64,8 +64,17 @@ Two habits that help:
 `018-` is a guaranteed conflict and, worse, two different specs with the same
 number in each person's history.
 
-**Claim the number first.** Create the file with just a title and push it
-before writing the body. The file existing on `main` is the claim.
+**Claim the number first — in a PR title or a GitHub issue, not in the
+repo.** "018 — driver ratings" as an issue or a draft PR title is the claim,
+and it is visible to the other person before either of you has written a line.
+
+Deliberately NOT a stub file on `main`. Two reasons, and the second is the
+one that matters: a title-only file would have to reach `main` to be the
+claim, which means pushing straight past the pull request rule above; and
+`docs/specs/` means *decisions already made and implemented* (see
+`CLAUDE.md`). Filling it with placeholders for work nobody has started erodes
+the only thing that makes the three-way docs split useful — knowing what kind
+of thing you are reading before you read it.
 
 ---
 
@@ -98,6 +107,20 @@ until you know what went wrong to produce them.
 The same applies to `docs/future-plans.md`: those are deliberate deferrals
 with triggers attached, not oversights.
 
+**One of those triggers fires the moment this document becomes true.**
+future-plans §14 (admin review token to real admin authentication) triggers on
+"a second person reviewing documents, or the React dashboard, whichever comes
+first." `ADMIN_REVIEW_TOKEN` is a single shared secret: there is no audit
+trail, every approval is "whoever had the token", and `reviewed_by` is a
+string the caller supplies rather than an identity.
+
+With one reviewer that was merely weak. With two it is **retroactive** — the
+second a second person approves a driver, every approval ever made becomes
+unattributable, including the ones already in the database. Approvals do not
+become attributable later. These endpoints are what let an unverified driver
+carry someone's goods, so if document review is about to become a two-person
+job, do §14 first.
+
 ---
 
 ## Secrets
@@ -120,8 +143,21 @@ The values that are genuinely shared — the Google Maps key, the admin review
 token — are passed person to person, not committed and not pasted into a chat
 with an AI.
 
-**Delete old service account keys** in Google Cloud IAM when you rotate. An
-active forgotten key is worse than a revoked one.
+**Label every service account key with its owner in the Google Cloud console,
+and never delete a key you did not create.** Two people each holding their own
+key means the console lists keys that look interchangeable and are not.
+
+This is not hypothetical. On 8 Oct 2026 a key was rotated and the old one
+deleted; the local key stopped working and **nothing looked broken**. Firebase
+token verification does not use the private key — it checks Google's published
+public certs — so auth kept working, every endpoint kept working, and the
+whole test suite stayed green on a dead key. What silently stopped was
+anything that *signs*: Firebase Storage uploads and signed URLs, which is all
+of driver document verification. It was found days later by someone trying to
+mint a test token.
+
+So a key you delete does not fail loudly for its owner. It fails in one
+feature, later, for reasons that do not point at you.
 
 ---
 
@@ -153,8 +189,23 @@ For whoever is joining:
 4. Generate your own service account key
 5. Copy `.env.example` to `.env` and fill it in
 6. Add your own Firebase test number
-7. Run the backend locally, run both apps against it, make one booking end to
-   end
+7. Set `VOLT_DEVICE` and `VOLT_LAN_IP`, then run the backend locally, run both
+   apps against it, and make one booking end to end.
+
+   The run scripts read both from the environment — they used to hardcode one
+   person's phone and one person's LAN IP, so all four failed for anybody
+   else. `flutter devices` gives the device id; `ipconfig` gives the IPv4 of
+   the machine running the backend, which must be started with
+   `--host 0.0.0.0` or the phone cannot reach it.
+
+   ```powershell
+   $env:VOLT_DEVICE = 'RMX3371'
+   $env:VOLT_LAN_IP = '192.168.1.8'
+   ```
+
+   Unset, the scripts stop with a message saying which one is missing rather
+   than failing somewhere inside Flutter. To keep them across terminals:
+   `[Environment]::SetEnvironmentVariable('VOLT_LAN_IP','192.168.1.8','User')`
 8. **Write down everything in the docs that did not make sense.** That list is
    the most valuable thing a new reader produces, and it expires within a
    week

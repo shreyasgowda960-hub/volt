@@ -25,11 +25,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.config import Settings
-from app.services.storage import (
-    StorageNotConfigured,
-    verify_storage_configured,
-)
+from pydantic import ValidationError
+
+from app.config import MissingConfiguration, Settings, get_settings
+from app.services.storage import verify_storage_configured
 
 
 def _settings(**overrides) -> Settings:
@@ -41,46 +40,61 @@ def _settings(**overrides) -> Settings:
     return Settings(**base)  # type: ignore[arg-type]
 
 
-class TestMissingBucketIsFatal:
-    """The one check that would have caught the incident outright."""
+class TestTheBucketNameIsRequiredByTheType:
+    """Enforcement lives in Settings, and ONLY in Settings.
 
-    def test_unset_bucket_raises(self):
-        with patch(
-            "app.services.storage.get_settings",
-            return_value=_settings(firebase_storage_bucket=None),
-        ):
-            with pytest.raises(StorageNotConfigured) as exc_info:
-                verify_storage_configured()
+    It used to live in a comment, in the type (as optional) and in a startup
+    check, which is three places free to disagree. A required non-empty str
+    fails when configuration is first loaded — earlier than any startup check
+    can run, and earlier than the app finishes importing.
 
-        # The message has to name the variable. Whoever hits this is reading a
-        # Render deploy log, not this file.
-        assert "FIREBASE_STORAGE_BUCKET" in str(exc_info.value)
+    _env_file=None is load-bearing in these tests: without it pydantic reads
+    the developer's own .env, which does have a bucket, and every one of them
+    would pass while asserting nothing.
+    """
 
-    def test_empty_string_is_treated_as_unset(self):
-        """An env var set to "" is the shape a half-filled dashboard produces,
-        and it must not read as configured."""
-        with patch(
-            "app.services.storage.get_settings",
-            return_value=_settings(firebase_storage_bucket=""),
-        ):
-            with pytest.raises(StorageNotConfigured):
-                verify_storage_configured()
+    BASE = {"database_url": "postgresql+asyncpg://u:p@localhost/db"}
 
-    def test_no_network_call_is_made_when_the_name_is_missing(self):
-        """Fails on configuration alone.
+    def test_a_missing_bucket_is_rejected(self, monkeypatch):
+        monkeypatch.delenv("FIREBASE_STORAGE_BUCKET", raising=False)
 
-        If this check needed Storage to answer, it could not be trusted to run
-        on a cold start — which is exactly when it runs on Render's free plan.
-        """
-        with patch(
-            "app.services.storage.get_settings",
-            return_value=_settings(firebase_storage_bucket=None),
-        ):
-            with patch("firebase_admin.storage.bucket") as bucket:
-                with pytest.raises(StorageNotConfigured):
-                    verify_storage_configured()
+        with pytest.raises(ValidationError) as exc_info:
+            Settings(**self.BASE, _env_file=None)  # type: ignore[arg-type]
 
-        bucket.assert_not_called()
+        assert any(
+            err["loc"] == ("firebase_storage_bucket",)
+            for err in exc_info.value.errors()
+        )
+
+    def test_an_empty_bucket_is_rejected(self, monkeypatch):
+        """The shape a half-filled dashboard produces. `str` alone accepts it,
+        which is why the field carries min_length=1."""
+        monkeypatch.delenv("FIREBASE_STORAGE_BUCKET", raising=False)
+
+        with pytest.raises(ValidationError):
+            Settings(  # type: ignore[arg-type]
+                **self.BASE, firebase_storage_bucket="", _env_file=None
+            )
+
+    def test_the_failure_names_the_variable_and_the_file(self, monkeypatch):
+        """A pydantic traceback is the wrong thing to hand someone who has
+        just cloned the repo. get_settings turns it into a sentence."""
+        monkeypatch.delenv("FIREBASE_STORAGE_BUCKET", raising=False)
+        monkeypatch.setattr(
+            "app.config.Settings",
+            lambda *a, **kw: Settings(**self.BASE, _env_file=None),  # type: ignore[arg-type]
+        )
+        get_settings.cache_clear()
+
+        try:
+            with pytest.raises(MissingConfiguration) as exc_info:
+                get_settings()
+        finally:
+            get_settings.cache_clear()
+
+        message = str(exc_info.value)
+        assert "FIREBASE_STORAGE_BUCKET" in message
+        assert ".env.example" in message
 
 
 class TestReachabilityNeverStopsTheProcess:
@@ -135,6 +149,8 @@ class TestTheBucketNameReachesFirebase:
     """
 
     def test_init_firebase_passes_storage_bucket_as_an_option(self):
+        """Passed unconditionally — Settings guarantees a non-empty value, so
+        there is no unset case left for init_firebase to branch on."""
         import app.auth as auth_module
 
         with patch.object(auth_module, "firebase_admin") as fb:
@@ -155,30 +171,6 @@ class TestTheBucketNameReachesFirebase:
         fb.initialize_app.assert_called_once()
         _, options = fb.initialize_app.call_args[0]
         assert options["storageBucket"] == "volt-test.firebasestorage.app"
-
-    def test_no_bucket_option_when_unset_rather_than_an_empty_one(self):
-        """firebase_admin treats an empty storageBucket as a configured bucket
-        with an empty name, which fails later and more confusingly than not
-        setting the key at all."""
-        import app.auth as auth_module
-
-        with patch.object(auth_module, "firebase_admin") as fb:
-            fb._apps = {}
-            with patch.object(
-                auth_module.credentials, "Certificate", return_value="cred"
-            ):
-                with patch.object(
-                    auth_module,
-                    "get_settings",
-                    return_value=_settings(
-                        firebase_credentials_json=None,
-                        firebase_storage_bucket=None,
-                    ),
-                ):
-                    auth_module.init_firebase()
-
-        _, options = fb.initialize_app.call_args[0]
-        assert "storageBucket" not in options
 
 
 class TestSignedUrlExpiry:

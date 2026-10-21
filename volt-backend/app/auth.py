@@ -31,11 +31,13 @@ def init_firebase() -> None:
     # default. Without it every Storage call raises "Storage bucket name not
     # specified" — at upload time, not at startup, which is how a deploy with
     # no bucket configured reached production looking healthy.
-    options = {}
-    if settings.firebase_storage_bucket:
-        options["storageBucket"] = settings.firebase_storage_bucket
-
-    firebase_admin.initialize_app(cred, options)
+    #
+    # Passed unconditionally: Settings makes it a required non-empty str, so
+    # there is no "unset" case left to branch on. A guard here would only
+    # suggest there was one.
+    firebase_admin.initialize_app(
+        cred, {"storageBucket": settings.firebase_storage_bucket}
+    )
 
 
 async def verify_token(creds: HTTPAuthorizationCredentials) -> dict:

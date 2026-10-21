@@ -28,13 +28,11 @@ async def lifespan(app: FastAPI):
         )
         raise
 
-    # Same treatment as credentials above, and for the same reason: config a
-    # core flow cannot work without belongs at startup, not at first use. The
-    # bucket name was missing in production for a whole deploy because nothing
-    # checked it until a driver pressed Upload.
-    #
-    # The reachability half of this never raises — see verify_storage_configured.
-    # Only a MISSING bucket name stops the process.
+    # Reachability only, and it never raises — see verify_storage_configured.
+    # A missing or empty bucket name is caught earlier and harder, by Settings
+    # itself: the field is a required non-empty str, so configuration fails to
+    # load at all rather than failing when a driver presses Upload, which is
+    # how it reached production for a whole deploy.
     await run_in_threadpool(verify_storage_configured)
 
     yield
