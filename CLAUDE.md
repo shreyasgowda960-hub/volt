@@ -59,6 +59,31 @@ volt-backend/
 **Git**
 - Feature branches, conventional commit messages, small commits.
 
+## Working with other people
+Two people now. `docs/collaboration.md` is the working agreement and the
+detail lives there — this is only enough to know when to go and read it. Do
+not restate its rules here; two copies of a rule drift, and the copy someone
+happens to read is then the wrong one.
+
+- **`main` auto-deploys to production**, migrations included, about two
+  minutes after a push. So nothing reaches `main` except through a pull
+  request, and `.github/pull_request_template.md` is what the PR has to
+  answer.
+- **One person owns a surface for the duration of a spec** — backend,
+  customer app, driver app, `packages/volt_core/`. Per spec, not forever. A
+  spec that needs both backend and app is taken whole by one person rather
+  than split down an API contract that is still being designed.
+- **Claim a spec number before writing the spec**, by landing a title-only
+  file. Two people both writing `018-` is not just a conflict, it is two
+  different specs with the same number in two histories.
+- **Each person generates their own Firebase service account key and their
+  own test phone number.** Never share either. Secrets still never leave the
+  machine they are used on — not chat, not screenshots, not an AI
+  conversation.
+- **Say before you change a console.** Firebase and Render changes are
+  invisible in git, and several of this project's hardest bugs were exactly
+  that gap.
+
 ## Roadmap — hold me to this order
 1. Auth (phone OTP) + create booking + fare estimate + persist to PostgreSQL
 2. Driver app: go online/offline, accept/reject job, booking status lifecycle
@@ -98,6 +123,9 @@ knowledge is not found when it is needed:
   and wrong at scale belongs here the moment it is decided, not when it starts
   hurting: the whole failure mode is that the trigger passes unnoticed.
 - `docs/VOLT-handoff.md` — today's status: in flight, blocked, next.
+- `docs/collaboration.md` — how two people work on this without standing on
+  each other. Branching, surface ownership, spec-number claiming, secrets,
+  and the onboarding checklist. Process, not decisions.
 
 If you defer something because it is fine at this size, add it to
 future-plans.md in the same session. Otherwise it lives only in a chat log that

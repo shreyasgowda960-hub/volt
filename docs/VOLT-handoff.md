@@ -1,11 +1,17 @@
 # VOLT — Handoff
 
 Porter-style on-demand logistics for Bengaluru. Customer app, driver app,
-FastAPI backend, PostgreSQL. Solo founder, final-year CE student, small team of
-friends helping.
+FastAPI backend, PostgreSQL. Two people building it, final-year CE students.
 
 Read this with `CLAUDE.md` (conventions + current state), `docs/specs/`
 (numbered specs, each recording *why*), and `docs/future-plans.md`.
+
+**New, and read it before your first commit: `docs/collaboration.md`** — the
+working agreement for two people. Branching, who owns which surface, claiming
+a spec number, secrets, and the onboarding checklist. The one line that
+matters most: `main` auto-deploys to production, so nothing reaches it except
+through a pull request. `.github/pull_request_template.md` is what that PR
+has to answer.
 
 That last one is the newest and the easiest to forget: it holds decisions that
 are **correct now and wrong at scale**, each with the observable trigger that
